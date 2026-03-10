@@ -22,7 +22,8 @@ Development
 Database
 --------
 - Prisma + SQLite。
-- 安装依赖后先跑 `pnpm prisma generate`；需要本地库文件时跑 `DATABASE_URL="file:./dev.db" pnpm prisma db push`。
+- 安装依赖后先跑 `pnpm prisma generate`；需要本地库文件时跑 `DATABASE_URL="file:./prisma/dev.db" pnpm prisma db push`。
+- 本地样例数据（3 个任务 + 7 天计划 + 1 条完成记录 + 1 个 blackout），并会重置相关表：`DATABASE_URL="file:./prisma/dev.db" pnpm seed`（未显式设置时脚本默认使用该路径）。
 
 Design Snapshot
 ---------------
