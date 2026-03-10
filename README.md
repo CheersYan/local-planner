@@ -19,6 +19,11 @@ Development
 - Typecheck: `pnpm typecheck`
 - 数据库存本地 SQLite，数据库是唯一真相；不在客户端存储 API key。
 
+Database
+--------
+- Prisma + SQLite。
+- 安装依赖后先跑 `pnpm prisma generate`；需要本地库文件时跑 `DATABASE_URL="file:./prisma/dev.db" pnpm prisma db push`。
+
 Design Snapshot
 ---------------
 首页建议三栏：左侧 AI 聊天与“识别到的操作”预览，中间 Today/本周/未来 7–14 天计划视图，右侧状态与异常（任务列表、完成记录、blackout、容量/重排提醒）；浅灰或深色底、大圆角卡片、轻渐变与柔和阴影。 

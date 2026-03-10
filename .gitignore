@@ -33,6 +33,12 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# sqlite
+/prisma/*.db
+/prisma/*.db-journal
+/prisma/prisma/*.db
+/prisma/prisma/*.db-journal
+
 # vercel
 .vercel
 
@@ -40,3 +46,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 /.idea/
+

@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id              String         @id @default(cuid())
+  title           String
+  status          String         @default("planned")
+  estimateMinutes Int
+  actualMinutes   Int?
+  dueDate         DateTime?
+  plannedDate     DateTime?
+  priority        Int            @default(0)
+  locked          Boolean        @default(false)
+  planDayTasks    PlanDayTask[]
+  completions     CompletionLog[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model PlanDay {
+  id              String        @id @default(cuid())
+  date            DateTime      @unique
+  capacityMinutes Int           @default(480)
+  loadMinutes     Int           @default(0)
+  assignments     PlanDayTask[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model PlanDayTask {
+  id             String   @id @default(cuid())
+  planDayId      String
+  taskId         String
+  order          Int
+  plannedMinutes Int
+  planDay        PlanDay  @relation(fields: [planDayId], references: [id], onDelete: Cascade)
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([planDayId, order])
+  @@index([taskId])
+}
+
+model GoalWindow {
+  id              String   @id @default(cuid())
+  startDate       DateTime
+  endDate         DateTime
+  targetTaskCount Int?
+  targetMinutes   Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Blackout {
+  id        String   @id @default(cuid())
+  start     DateTime
+  end       DateTime
+  reason    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CompletionLog {
+  id           String   @id @default(cuid())
+  taskId       String
+  loggedAt     DateTime
+  minutesSpent Int?
+  note         String?
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([taskId])
+}
+
+model CommandInbox {
+  id        String        @id @default(cuid())
+  type      String
+  payload   String
+  messageId String?
+  status    String        @default("pending")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
