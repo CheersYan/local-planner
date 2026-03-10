@@ -7,6 +7,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Setting {
+  id        String   @id @default(cuid())
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([key])
+  @@map("settings")
+}
+
 model Task {
   id              String         @id @default(cuid())
   title           String
@@ -17,52 +28,32 @@ model Task {
   plannedDate     DateTime?
   priority        Int            @default(0)
   locked          Boolean        @default(false)
-  planDayTasks    PlanDayTask[]
+  planSlots       PlanSlot[]
   completions     CompletionLog[]
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+
+  @@index([status])
+  @@index([plannedDate])
+  @@index([dueDate])
+  @@map("task")
 }
 
-model PlanDay {
-  id              String        @id @default(cuid())
-  date            DateTime      @unique
-  capacityMinutes Int           @default(480)
-  loadMinutes     Int           @default(0)
-  assignments     PlanDayTask[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-}
-
-model PlanDayTask {
-  id             String   @id @default(cuid())
-  planDayId      String
+model PlanSlot {
+  id             String    @id @default(cuid())
   taskId         String
-  order          Int
+  slotDate       DateTime
   plannedMinutes Int
-  planDay        PlanDay  @relation(fields: [planDayId], references: [id], onDelete: Cascade)
-  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  position       Int       @default(0)
+  locked         Boolean   @default(false)
+  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  @@unique([planDayId, order])
+  @@unique([slotDate, position])
   @@index([taskId])
-}
-
-model GoalWindow {
-  id              String   @id @default(cuid())
-  startDate       DateTime
-  endDate         DateTime
-  targetTaskCount Int?
-  targetMinutes   Int?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-}
-
-model Blackout {
-  id        String   @id @default(cuid())
-  start     DateTime
-  end       DateTime
-  reason    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  @@index([slotDate])
+  @@map("plan_slot")
 }
 
 model CompletionLog {
@@ -76,14 +67,36 @@ model CompletionLog {
   updatedAt    DateTime @updatedAt
 
   @@index([taskId])
+  @@index([loggedAt])
+  @@map("completion_log")
 }
 
-model CommandInbox {
-  id        String        @id @default(cuid())
-  type      String
-  payload   String
-  messageId String?
-  status    String        @default("pending")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+model BlackoutWindow {
+  id        String   @id @default(cuid())
+  start     DateTime
+  end       DateTime
+  reason    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([start, end])
+  @@map("blackout_window")
+}
+
+model ChatAudit {
+  id          String           @id @default(cuid())
+  role        String
+  messageId   String?
+  message     String
+  commandType String?
+  payload     String?
+  status      String           @default("pending")
+  error       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([messageId])
+  @@index([createdAt])
+  @@index([status])
+  @@map("chat_audit")
 }
