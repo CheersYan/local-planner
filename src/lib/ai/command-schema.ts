@@ -64,6 +64,7 @@ export const aiReadableTaskSchema = z.object({
   status: taskStatusSchema,
   estimateMinutes: z.number().int().nonnegative(),
   actualMinutes: z.number().int().nonnegative().optional(),
+  remainingMinutes: z.number().int().nonnegative().optional(),
   dueDate: isoDateSchema.optional(),
   plannedDate: isoDateSchema.optional(),
   priority: z.number().int(),
@@ -72,7 +73,25 @@ export const aiReadableTaskSchema = z.object({
 
 export type AiReadableTask = z.infer<typeof aiReadableTaskSchema>;
 
+export const aiReadableBlackoutSchema = z
+  .object({
+    id: z.string().optional(),
+    start: isoDateTimeSchema,
+    end: isoDateTimeSchema,
+    reason: z.string().min(1, "Reason is required"),
+  })
+  .refine(({ start, end }) => new Date(end).getTime() > new Date(start).getTime(), {
+    message: "blackout end must be after start",
+    path: ["end"],
+  });
+
+export type AiReadableBlackout = z.infer<typeof aiReadableBlackoutSchema>;
+
 export const aiReadableContextSchema = z.object({
+  todayLocalDate: isoDateSchema.optional(),
+  timezone: z.string().min(1, "Timezone is required").optional(),
+  dailyCapacityHours: z.number().nonnegative().optional(),
+  blackouts: z.array(aiReadableBlackoutSchema).default([]),
   tasks: z.array(aiReadableTaskSchema).default([]),
 });
 
@@ -104,6 +123,7 @@ export const logCompletionCommandSchema = z
       taskId: z.string().optional(),
       title: z.string().optional(),
       minutesSpent: z.number().int().positive().optional(),
+      markDone: z.boolean(),
       note: z.string().max(500).optional(),
       loggedAt: isoDateTimeSchema.optional(),
     }),
@@ -111,6 +131,10 @@ export const logCompletionCommandSchema = z
   .refine(({ payload }) => Boolean(payload.taskId || payload.title), {
     message: "Either taskId or title is required",
     path: ["payload", "taskId"],
+  })
+  .refine(({ payload }) => payload.minutesSpent !== undefined || payload.markDone === true, {
+    message: "minutesSpent may be omitted only when markDone is true",
+    path: ["payload", "minutesSpent"],
   });
 
 export type LogCompletionCommand = z.infer<typeof logCompletionCommandSchema>;
@@ -120,7 +144,7 @@ export const shrinkTaskCommandSchema = z
     type: z.literal("shrink_task"),
     payload: z.object({
       taskId: z.string(),
-      newEstimateMinutes: z.number().int().positive(),
+      newRemainingMinutes: z.number().int().nonnegative(),
       previousEstimateMinutes: z.number().int().positive().optional(),
       reason: z.string().max(300).optional(),
     }),
@@ -128,10 +152,10 @@ export const shrinkTaskCommandSchema = z
   .refine(
     ({ payload }) =>
       payload.previousEstimateMinutes === undefined ||
-      payload.newEstimateMinutes < payload.previousEstimateMinutes,
+      payload.newRemainingMinutes <= payload.previousEstimateMinutes,
     {
-      message: "newEstimateMinutes must be smaller than previousEstimateMinutes",
-      path: ["payload", "newEstimateMinutes"],
+      message: "newRemainingMinutes must be <= previousEstimateMinutes",
+      path: ["payload", "newRemainingMinutes"],
     }
   );
 
@@ -180,6 +204,6 @@ export const aiCommandSchema = z.discriminatedUnion("type", [
 
 export type AiCommand = z.infer<typeof aiCommandSchema>;
 
-export const aiCommandBatchSchema = z.array(aiCommandSchema).min(1);
+export const aiCommandBatchSchema = z.array(aiCommandSchema);
 
 export type AiCommandBatch = z.infer<typeof aiCommandBatchSchema>;

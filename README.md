@@ -18,6 +18,7 @@ Development
 - Lint: `pnpm lint`
 - Typecheck: `pnpm typecheck`
 - 数据库存本地 SQLite，数据库是唯一真相；不在客户端存储 API key。
+- AI 解析路由仅在服务器侧工作，需要设置 `OPENAI_API_KEY`（可选 `OPENAI_MODEL`，默认 `gpt-4.1-mini`），不会在客户端暴露。
 
 Database
 --------

@@ -8,7 +8,6 @@ import {
   ModelShrinkTaskCommand,
   modelAddBlackoutCommandSchema,
   modelAddUrgentTaskCommandSchema,
-  modelCommandSchema,
   modelCommandEnvelopeSchema,
   modelCreateTasksCommandSchema,
   modelLogCompletionCommandSchema,
@@ -82,9 +81,9 @@ describe("modelCommandEnvelopeSchema", () => {
     expect(modelCommandEnvelopeSchema.safeParse(envelopeFixture.commands).success).toBe(false);
   });
 
-  it("rejects empty command lists", () => {
+  it("accepts empty command lists for unclear requests", () => {
     const emptyEnvelope: ModelAiCommandEnvelope = { commands: [] };
-    expect(modelCommandEnvelopeSchema.safeParse(emptyEnvelope).success).toBe(false);
+    expect(modelCommandEnvelopeSchema.safeParse(emptyEnvelope).success).toBe(true);
   });
 
   it("rejects extra root keys because of strict mode", () => {
@@ -134,6 +133,19 @@ describe("nullable fields", () => {
 });
 
 describe("date validation", () => {
+  it("allows blackout start and end on the same day", () => {
+    const sameDay: ModelAddBlackoutCommand = {
+      type: "add_blackout",
+      payload: {
+        startDate: "2026-03-10",
+        endDate: "2026-03-10",
+        reason: "One-day leave",
+      },
+    };
+
+    expect(() => modelAddBlackoutCommandSchema.parse(sameDay)).not.toThrow();
+  });
+
   it("rejects impossible dates like 2026-02-30", () => {
     const invalidBlackout: ModelAddBlackoutCommand = {
       type: "add_blackout",
@@ -290,6 +302,27 @@ describe("shrink_task rules", () => {
 });
 
 describe("create_tasks specifics", () => {
+  it("accepts nullable dueDate and note on tasks", () => {
+    const valid = {
+      type: "create_tasks",
+      payload: {
+        tasks: [
+          {
+            title: "Task with nulls",
+            estimateMinutes: 45,
+            dueDate: null,
+            priority: "medium",
+            locked: false,
+            note: null,
+          },
+        ],
+        requestId: null,
+      },
+    };
+
+    expect(modelCreateTasksCommandSchema.safeParse(valid).success).toBe(true);
+  });
+
   it("rejects empty task array", () => {
     const invalid = {
       type: "create_tasks",
@@ -322,6 +355,23 @@ describe("create_tasks specifics", () => {
 });
 
 describe("add_urgent_task specifics", () => {
+  it("accepts null note and reason", () => {
+    const valid: ModelAddUrgentTaskCommand = {
+      type: "add_urgent_task",
+      payload: {
+        title: "Handle blocking bug",
+        estimateMinutes: 60,
+        dueDate: "2026-03-18",
+        priority: "urgent",
+        windowDays: 2,
+        note: null,
+        reason: null,
+      },
+    };
+
+    expect(() => modelAddUrgentTaskCommandSchema.parse(valid)).not.toThrow();
+  });
+
   it("rejects non-positive estimateMinutes", () => {
     const invalid: ModelAddUrgentTaskCommand = {
       type: "add_urgent_task",

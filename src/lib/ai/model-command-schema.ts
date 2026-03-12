@@ -64,6 +64,7 @@ export const modelIsoDateTimeSchema = z
   .refine(isValidIsoDateTime, "Invalid datetime value");
 
 export const modelPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
+export type ModelPriority = z.infer<typeof modelPrioritySchema>;
 
 const modelCreateTaskSchema = z
   .object({
@@ -191,7 +192,7 @@ export type ModelAiCommand = z.infer<typeof modelCommandSchema>;
 
 export const modelCommandEnvelopeSchema = z
   .object({
-    commands: z.array(modelCommandSchema).min(1),
+    commands: z.array(modelCommandSchema),
   })
   .strict();
 

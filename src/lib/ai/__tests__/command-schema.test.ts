@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AddBlackoutCommand,
   AiCommand,
+  aiCommandBatchSchema,
   aiCommandSchema,
   aiReadableContextSchema,
   LogCompletionCommand,
@@ -33,7 +34,9 @@ const commandFixtures: AiCommand[] = [
     type: "log_completion",
     payload: {
       taskId: "task-123",
+      title: undefined,
       minutesSpent: 45,
+      markDone: true,
       note: "Shipped core logic",
       loggedAt: "2026-03-12T01:30:00Z",
     },
@@ -42,7 +45,7 @@ const commandFixtures: AiCommand[] = [
     type: "shrink_task",
     payload: {
       taskId: "task-abc",
-      newEstimateMinutes: 60,
+      newRemainingMinutes: 60,
       previousEstimateMinutes: 120,
       reason: "Scope trimmed to MVP",
     },
@@ -79,7 +82,7 @@ describe("aiCommandSchema", () => {
   it("rejects log_completion without an identifier", () => {
     const invalid: LogCompletionCommand = {
       type: "log_completion",
-      payload: { minutesSpent: 30 },
+      payload: { minutesSpent: 30, markDone: false },
     };
 
     expect(() => logCompletionCommandSchema.parse(invalid)).toThrow(/taskId or title/i);
@@ -90,12 +93,12 @@ describe("aiCommandSchema", () => {
       type: "shrink_task",
       payload: {
         taskId: "task-xyz",
-        newEstimateMinutes: 120,
+        newRemainingMinutes: 120,
         previousEstimateMinutes: 60,
       },
     };
 
-    expect(() => shrinkTaskCommandSchema.parse(invalid)).toThrow(/smaller/i);
+    expect(() => shrinkTaskCommandSchema.parse(invalid)).toThrow(/previousEstimateMinutes/i);
   });
 
   it("requires blackout end to follow start", () => {
@@ -109,6 +112,19 @@ describe("aiCommandSchema", () => {
     };
 
     expect(() => addBlackoutCommandSchema.parse(invalid)).toThrow(/after start/i);
+  });
+
+  it("allows shrink_task payloads with zero newRemainingMinutes", () => {
+    const zero: ShrinkTaskCommand = {
+      type: "shrink_task",
+      payload: {
+        taskId: "task-zero",
+        newRemainingMinutes: 0,
+        previousEstimateMinutes: 30,
+      },
+    };
+
+    expect(() => shrinkTaskCommandSchema.parse(zero)).not.toThrow();
   });
 
   it("accepts database task snapshots for AI context", () => {
@@ -131,5 +147,51 @@ describe("aiCommandSchema", () => {
       id: "task-existing",
       status: "planned",
     });
+  });
+
+  it("accepts extended AI context fields", () => {
+    const context = aiReadableContextSchema.parse({
+      todayLocalDate: "2026-03-12",
+      timezone: "Australia/Sydney",
+      dailyCapacityHours: 6.5,
+      blackouts: [
+        {
+          id: "blk-1",
+          start: "2026-03-15T09:00:00+11:00",
+          end: "2026-03-15T12:00:00+11:00",
+          reason: "Travel",
+        },
+      ],
+      tasks: [
+        {
+          id: "task-context",
+          title: "Review PR",
+          status: "planned",
+          estimateMinutes: 120,
+          actualMinutes: 30,
+          remainingMinutes: 70,
+          priority: 2,
+          locked: false,
+        },
+      ],
+    });
+
+    expect(context.todayLocalDate).toBe("2026-03-12");
+    expect(context.blackouts[0]).toMatchObject({ id: "blk-1", reason: "Travel" });
+    expect(context.tasks[0].remainingMinutes).toBe(70);
+  });
+
+  it("rejects context blackout windows where end precedes start", () => {
+    expect(() =>
+      aiReadableContextSchema.parse({
+        blackouts: [
+          { start: "2026-03-15T12:00:00Z", end: "2026-03-15T09:00:00Z", reason: "Invalid" },
+        ],
+      })
+    ).toThrow(/after start/i);
+  });
+
+  it("allows empty command batches when nothing should be executed", () => {
+    expect(() => aiCommandBatchSchema.parse([])).not.toThrow();
   });
 });
