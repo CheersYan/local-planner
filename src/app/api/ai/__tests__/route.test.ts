@@ -5,20 +5,54 @@ import type { InputMessage } from "@/lib/ai/openai-responses";
 
 const mockFetchModelCommands = vi.fn();
 const mockNormalizeModelEnvelope = vi.fn();
+
 const originalEnv = {
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
+  OPENAI_API_KEY_REAL_TEST: process.env.OPENAI_API_KEY_REAL_TEST,
+  OPENAI_MODEL_REAL_TEST: process.env.OPENAI_MODEL_REAL_TEST,
+  RUN_OPENAI_ROUTE_TEST: process.env.RUN_OPENAI_ROUTE_TEST,
 };
 
-vi.mock("@/lib/ai/openai-responses", () => ({
-  fetchModelCommands: mockFetchModelCommands,
-}));
+const REAL_TEST_API_KEY =
+  originalEnv.OPENAI_API_KEY_REAL_TEST ?? originalEnv.OPENAI_API_KEY;
 
-vi.mock("@/lib/ai/model-normalizer", () => ({
-  normalizeModelEnvelope: mockNormalizeModelEnvelope,
-}));
+const RUN_REAL_OPENAI_ROUTE_TEST =
+  process.env.RUN_OPENAI_ROUTE_TEST === "1" && Boolean(REAL_TEST_API_KEY);
 
-const loadRoute = async () => {
+const restoreEnvVar = (
+  key: keyof typeof originalEnv,
+  value: string | undefined
+) => {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+};
+
+const loadRoute = async (
+  options: { mockOpenAi?: boolean; mockNormalizer?: boolean } = {}
+) => {
+  const { mockOpenAi = true, mockNormalizer = true } = options;
+
+  vi.resetModules();
+  vi.doUnmock("@/lib/ai/openai-responses");
+  vi.doUnmock("@/lib/ai/model-normalizer");
+
+  if (mockOpenAi) {
+    vi.doMock("@/lib/ai/openai-responses", () => ({
+      fetchModelCommands: mockFetchModelCommands,
+    }));
+  }
+
+  if (mockNormalizer) {
+    vi.doMock("@/lib/ai/model-normalizer", () => ({
+      normalizeModelEnvelope: mockNormalizeModelEnvelope,
+    }));
+  }
+
   const route = await import("../route");
   const chatStore = await import("@/lib/ai/chat-store");
   return { POST: route.POST, chatStore };
@@ -31,18 +65,50 @@ const makeRequest = (body: string | Record<string, unknown>) =>
     headers: { "content-type": "application/json" },
   });
 
+const assertStrictSingleBlackoutCommand = (commands: unknown) => {
+  expect(Array.isArray(commands)).toBe(true);
+  if (!Array.isArray(commands)) {
+    throw new Error("commands is not an array");
+  }
+
+  expect(commands).toHaveLength(1);
+
+  const command = commands[0] as {
+    type?: unknown;
+    payload?: Record<string, unknown>;
+  };
+
+  expect(command.type).toBe("add_blackout");
+  expect(command.payload).toBeTruthy();
+  expect(command.payload?.reason).toBe("Offsite");
+  expect(command.payload?.start).toEqual(expect.any(String));
+  expect(command.payload?.end).toEqual(expect.any(String));
+
+  expect(String(command.payload?.start)).toMatch(
+    /^2026-03-20T00:00:00(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?$/
+  );
+  expect(String(command.payload?.end)).toMatch(
+    /^2026-03-20T23:59:59(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?$/
+  );
+};
+
 beforeEach(() => {
-  vi.resetModules(); // clears chat-store in-memory map between tests
   vi.clearAllMocks();
   mockFetchModelCommands.mockReset();
   mockNormalizeModelEnvelope.mockReset();
-  process.env.OPENAI_API_KEY = originalEnv.OPENAI_API_KEY;
-  process.env.OPENAI_MODEL = originalEnv.OPENAI_MODEL;
+  restoreEnvVar("OPENAI_API_KEY", originalEnv.OPENAI_API_KEY);
+  restoreEnvVar("OPENAI_MODEL", originalEnv.OPENAI_MODEL);
+  restoreEnvVar("OPENAI_API_KEY_REAL_TEST", originalEnv.OPENAI_API_KEY_REAL_TEST);
+  restoreEnvVar("OPENAI_MODEL_REAL_TEST", originalEnv.OPENAI_MODEL_REAL_TEST);
+  restoreEnvVar("RUN_OPENAI_ROUTE_TEST", originalEnv.RUN_OPENAI_ROUTE_TEST);
 });
 
 afterAll(() => {
-  process.env.OPENAI_API_KEY = originalEnv.OPENAI_API_KEY;
-  process.env.OPENAI_MODEL = originalEnv.OPENAI_MODEL;
+  restoreEnvVar("OPENAI_API_KEY", originalEnv.OPENAI_API_KEY);
+  restoreEnvVar("OPENAI_MODEL", originalEnv.OPENAI_MODEL);
+  restoreEnvVar("OPENAI_API_KEY_REAL_TEST", originalEnv.OPENAI_API_KEY_REAL_TEST);
+  restoreEnvVar("OPENAI_MODEL_REAL_TEST", originalEnv.OPENAI_MODEL_REAL_TEST);
+  restoreEnvVar("RUN_OPENAI_ROUTE_TEST", originalEnv.RUN_OPENAI_ROUTE_TEST);
 });
 
 describe("POST /api/ai", () => {
@@ -85,7 +151,11 @@ describe("POST /api/ai", () => {
     const commands = [
       {
         type: "add_blackout",
-        payload: { start: "2026-03-20T00:00:00Z", end: "2026-03-20T23:59:59Z", reason: "Offsite" },
+        payload: {
+          start: "2026-03-20T00:00:00Z",
+          end: "2026-03-20T23:59:59Z",
+          reason: "Offsite",
+        },
       },
     ];
     mockFetchModelCommands.mockResolvedValue({ envelope, raw: { id: "raw" } });
@@ -159,7 +229,12 @@ describe("POST /api/ai", () => {
       timezone: "Australia/Sydney",
       dailyCapacityHours: 7.5,
       blackouts: [
-        { id: "blk-1", start: "2026-03-14T00:00:00+11:00", end: "2026-03-14T23:59:00+11:00", reason: "Travel" },
+        {
+          id: "blk-1",
+          start: "2026-03-14T00:00:00+11:00",
+          end: "2026-03-14T23:59:00+11:00",
+          reason: "Travel",
+        },
       ],
       tasks: [
         {
@@ -189,4 +264,64 @@ describe("POST /api/ai", () => {
     expect(contextMessage?.content).toContain("Existing blackouts:");
     expect(contextMessage?.content).toContain("remaining:25min");
   });
+
+  (RUN_REAL_OPENAI_ROUTE_TEST ? it : it.skip)(
+    "calls the real OpenAI API and returns exactly one add_blackout command when explicitly enabled",
+    async () => {
+      process.env.OPENAI_API_KEY = REAL_TEST_API_KEY;
+      process.env.OPENAI_MODEL =
+        originalEnv.OPENAI_MODEL_REAL_TEST ??
+        originalEnv.OPENAI_MODEL ??
+        "gpt-4.1-mini";
+
+      const { POST } = await loadRoute({
+        mockOpenAi: false,
+        mockNormalizer: false,
+      });
+
+      const realPrompt = [
+        "真实请求：我 2026-03-20 全天都在外地参加 Offsite，无法工作，请帮我在这一天添加 blackout。",
+        "约束：只返回一个 add_blackout 命令，reason 必须是 Offsite，startDate 和 endDate 都是 2026-03-20。",
+      ].join("\n");
+
+      const context = {
+        todayLocalDate: "2026-03-13",
+        timezone: "Australia/Sydney",
+        dailyCapacityHours: 7.5,
+        blackouts: [],
+        tasks: [],
+      };
+
+      const response = await POST(makeRequest({ message: realPrompt, context }));
+      try {
+        expect(response.status).toBe(200);
+        expect(mockFetchModelCommands).not.toHaveBeenCalled();
+        expect(mockNormalizeModelEnvelope).not.toHaveBeenCalled();
+      } catch (err) {
+        console.log('response body:', await response.clone().text());
+        throw err;
+      }
+      const data = await response.json();
+      expect(data.chatId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
+      expect(data.history).toHaveLength(2);
+      expect(data.history[0]).toMatchObject({ role: "user", content: realPrompt });
+      expect(data.history[1]).toMatchObject({
+        role: "assistant",
+        content: "Parsed 1 command(s).",
+      });
+
+      expect(Array.isArray(data.raw?.commands)).toBe(true);
+      if (!Array.isArray(data.raw?.commands)) {
+        throw new Error("raw.commands is not an array");
+      }
+      expect(data.raw.commands).toHaveLength(1);
+      expect(data.raw.commands[0]?.type).toBe("add_blackout");
+
+      expect(data.commands).toHaveLength(1);
+      assertStrictSingleBlackoutCommand(data.commands);
+    },
+    60_000
+  );
 });

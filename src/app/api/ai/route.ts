@@ -23,7 +23,12 @@ export const systemPrompt = `You convert user intent into planner commands only.
 - Do not change past days; only describe actions as structured commands.
 - Use the provided JSON schema; never add fields or prose outside the JSON.
 - If the request is unclear or does not map cleanly to the allowed commands, return {"commands": []} instead of guessing.
-- Keep notes concise (max 500 chars) and reasons under 300 chars.`;
+- A clear request like "I cannot work on 2026-03-20 because I am offsite" must be converted into an add_blackout for that date.
+- When the user supplies enough fields and clearly targets an allowed command, respond with that command instead of {"commands": []}.
+- Keep notes concise (max 500 chars) and reasons under 300 chars.
+- Date-only fields (add_blackout.startDate, add_blackout.endDate, all dueDate fields) must be exactly YYYY-MM-DD — no time, timezone, natural language, or ranges.
+- Example add_blackout: {"commands":[{"type":"add_blackout","payload":{"startDate":"2026-03-20","endDate":"2026-03-21","reason":"Offsite"}}]}
+- Never output time or timezone inside date-only fields; only loggedAt is a datetime.`;
 
 const computeRemainingMinutes = (task: AiReadableTask): number => {
   if (typeof task.remainingMinutes === "number" && Number.isFinite(task.remainingMinutes)) {

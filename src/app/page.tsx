@@ -1,24 +1,4 @@
-type ChatAuthor = "user" | "planner";
-
-type ChatMessage = {
-  id: string;
-  author: ChatAuthor;
-  text: string;
-  timestamp: string;
-};
-
-type QuickCommand = {
-  id: string;
-  label: string;
-  hint: string;
-};
-
-type ActionPreview = {
-  id: string;
-  title: string;
-  summary: string;
-  status: "ready" | "queued";
-};
+import { AiChatPanel } from "@/components/ai/ai-chat-panel";
 
 type PlanTaskStatus = "planned" | "in_progress" | "done";
 
@@ -60,61 +40,6 @@ type LogEntry = {
   detail: string;
   when: string;
 };
-
-const chatHistory: ChatMessage[] = [
-  {
-    id: "m1",
-    author: "user",
-    text: "帮我把 3 月中旬的交付和本周设计探讨都排上，时间不要撞。",
-    timestamp: "09:12",
-  },
-  {
-    id: "m2",
-    author: "planner",
-    text: "收到：新增了“迭代交付”任务并锁定 3/14 前完成。设计探讨论证安排在周三下午 2h。",
-    timestamp: "09:13",
-  },
-  {
-    id: "m3",
-    author: "user",
-    text: "周四上午有 blackout，别排任务。",
-    timestamp: "09:14",
-  },
-  {
-    id: "m4",
-    author: "planner",
-    text: "已标记 3/12 上午为不可用，并将当日未完成项顺延到周五。",
-    timestamp: "09:14",
-  },
-];
-
-const quickCommands: QuickCommand[] = [
-  { id: "qc1", label: "Add task", hint: "新增任务 + 预估" },
-  { id: "qc2", label: "Set blackout", hint: "标记不可用时段" },
-  { id: "qc3", label: "Log done", hint: "记录完成 & 用时" },
-  { id: "qc4", label: "Replan", hint: "只调整今天以后" },
-];
-
-const actionPreviews: ActionPreview[] = [
-  {
-    id: "a1",
-    title: "add_task",
-    summary: "迭代交付 · 6h · due 3/14 · priority high",
-    status: "ready",
-  },
-  {
-    id: "a2",
-    title: "set_blackout",
-    summary: "3/12 09:00–12:00 标记不可用",
-    status: "ready",
-  },
-  {
-    id: "a3",
-    title: "set_goal",
-    summary: "7 天内完成 8 个任务（≥ 18h 预算）",
-    status: "queued",
-  },
-];
 
 const planDays: PlanDay[] = [
   {
@@ -245,97 +170,16 @@ export default function Home() {
       <div className="mx-auto flex max-w-7xl flex-col gap-8">
         <header className="flex flex-col gap-2">
           <span className="pill-muted px-3 py-1 text-xs font-semibold uppercase tracking-wide">
-            Home · mock layout
+            Home · preview
           </span>
           <h1 className="text-4xl font-semibold tracking-tight">Planner overview</h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            三栏骨架，使用静态示例数据；无数据库、无 OpenAI 调用。排期逻辑保持确定性，后续可接入真实服务。
+            左侧聊天面板已接通本地 /api/ai 并仅做命令预览；中右栏仍为静态示例排程，未写数据库。
           </p>
         </header>
 
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_1.45fr_1fr]">
-          <div className="card-surface flex h-full flex-col gap-4 p-6">
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <h2 className="text-lg font-semibold tracking-tight">Chat & commands</h2>
-                <p className="text-sm text-muted-foreground">静态对话示例 + 常用指令芯片。</p>
-              </div>
-              <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                mock data
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {chatHistory.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.author === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[88%] rounded-2xl px-4 py-3 shadow-sm ${
-                      message.author === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-surface text-foreground ring-1 ring-border/70"
-                    }`}
-                  >
-                    <div className="text-sm leading-relaxed">{message.text}</div>
-                    <div className="mt-1 text-[11px] font-medium opacity-75">{message.timestamp}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <span>Quick commands</span>
-                <span>本地解析预览</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {quickCommands.map((command) => (
-                  <span
-                    key={command.id}
-                    className="rounded-full bg-muted px-3 py-1 text-sm font-medium text-foreground ring-1 ring-border/60"
-                  >
-                    {command.label}
-                    <span className="ml-2 text-xs text-muted-foreground">{command.hint}</span>
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border/70 bg-surface/70 p-4 shadow-sm">
-              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <span>识别到的操作</span>
-                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">deterministic</span>
-              </div>
-              <div className="mt-3 space-y-2.5">
-                {actionPreviews.map((action) => (
-                  <div
-                    key={action.id}
-                    className="flex items-center justify-between gap-3 rounded-xl bg-muted/40 px-3 py-2 text-sm"
-                  >
-                    <div className="space-y-0.5">
-                      <div className="font-semibold leading-snug">{action.title}</div>
-                      <div className="text-xs text-muted-foreground">{action.summary}</div>
-                    </div>
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
-                        action.status === "ready"
-                          ? "bg-success/15 text-success"
-                          : "bg-accent/20 text-accent-foreground"
-                      }`}
-                    >
-                      {action.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-auto rounded-2xl border border-dashed border-border/80 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-              输入框占位：后续接入本地 command inbox。当前页面不发送任何请求。
-            </div>
-          </div>
+          <AiChatPanel />
 
           <div className="flex h-full flex-col gap-4">
             {planDays.slice(0, 1).map((day) => (
