@@ -57,7 +57,7 @@ export const logCompletion = async (
   const task = taskId
     ? await prisma.task.findUnique({
         where: { id: taskId },
-        select: { id: true, actualMinutes: true },
+        select: { id: true, estimateMinutes: true, actualMinutes: true, remainingMinutes: true },
       })
     : null;
 
@@ -75,6 +75,8 @@ export const logCompletion = async (
 
   const minutesSpent = Math.round(hoursDone * 60);
   const previousActual = task?.actualMinutes ?? 0;
+  const previousRemaining =
+    task?.remainingMinutes ?? Math.max((task?.estimateMinutes ?? 0) - previousActual, 0);
   let databaseUpdated = false;
 
   try {
@@ -90,7 +92,10 @@ export const logCompletion = async (
 
       await tx.task.update({
         where: { id: taskId },
-        data: { actualMinutes: previousActual + minutesSpent },
+        data: {
+          actualMinutes: previousActual + minutesSpent,
+          remainingMinutes: Math.max(previousRemaining - minutesSpent, 0),
+        },
       });
     });
 

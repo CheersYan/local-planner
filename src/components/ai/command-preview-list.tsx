@@ -1,19 +1,24 @@
 "use client";
 
 import type { AiCommandBatch } from "@/lib/ai/command-schema";
+import type { CommandResult } from "@/lib/commands/types";
 
 import { CommandPreviewCard } from "./command-preview-card";
 
 type CommandPreviewListProps = {
   commands: AiCommandBatch;
+  results?: CommandResult[] | null;
   isLoading?: boolean;
   hasResult?: boolean;
+  statusMessage?: string | null;
 };
 
 export function CommandPreviewList({
   commands,
+  results,
   isLoading = false,
   hasResult = false,
+  statusMessage,
 }: CommandPreviewListProps) {
   const headerText = hasResult
     ? commands.length === 0
@@ -43,6 +48,12 @@ export function CommandPreviewList({
         </span>
       </div>
 
+      {statusMessage ? (
+        <div className="mt-3 rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-sm text-foreground">
+          {statusMessage}
+        </div>
+      ) : null}
+
       <div className="mt-3 space-y-3">
         {isLoading ? (
           <div className="space-y-2">
@@ -57,7 +68,12 @@ export function CommandPreviewList({
           </div>
         ) : (
           commands.map((command, index) => (
-            <CommandPreviewCard key={`${command.type}-${index}`} command={command} index={index} />
+            <CommandPreviewCard
+              key={`${command.type}-${index}`}
+              command={command}
+              index={index}
+              result={results?.[index]}
+            />
           ))
         )}
       </div>

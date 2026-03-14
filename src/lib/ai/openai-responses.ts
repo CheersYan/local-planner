@@ -24,7 +24,60 @@ const isoDateTimeString = {
 
 const positiveInt = { type: "integer", minimum: 1 } as const;
 const nonNegativeInt = { type: "integer", minimum: 0 } as const;
+const positiveNumber = { type: "number", exclusiveMinimum: 0 } as const;
+const nonNegativeNumber = { type: "number", minimum: 0 } as const;
 const nullableString = { anyOf: [{ type: "string" }, { type: "null" }] } as const;
+
+const strictObject = <T extends Record<string, unknown>>(properties: T) => ({
+  type: "object" as const,
+  additionalProperties: false as const,
+  properties,
+  required: Object.keys(properties) as Array<keyof T & string>,
+});
+
+const nullablePositiveInt = { anyOf: [positiveInt, { type: "null" }] } as const;
+const nullablePositiveNumber = { anyOf: [positiveNumber, { type: "null" }] } as const;
+const nullableNonNegativeNumber = { anyOf: [nonNegativeNumber, { type: "null" }] } as const;
+const nullablePriority = {
+  anyOf: [
+    { type: "string", enum: ["low", "medium", "high", "urgent"] },
+    { type: "null" },
+  ],
+} as const;
+const nullableNote = {
+  anyOf: [
+    { type: "string", maxLength: 500 },
+    { type: "null" },
+  ],
+} as const;
+const nullableReason = {
+  anyOf: [
+    { type: "string", maxLength: 300 },
+    { type: "null" },
+  ],
+} as const;
+
+const taskLocatorJson = strictObject({
+  taskId: nullableString,
+  title: nullableString,
+  fuzzyTitle: nullableString,
+});
+
+const blackoutLocatorJson = strictObject({
+  blackoutId: nullableString,
+  startDate: nullableIsoDateString,
+  endDate: nullableIsoDateString,
+  fuzzyReason: nullableString,
+});
+
+const splitPartJson = strictObject({
+  title: { type: "string" },
+  estimateHours: nullablePositiveNumber,
+  remainingHours: nullableNonNegativeNumber,
+  dueDate: nullableIsoDateString,
+  priority: nullablePriority,
+  note: nullableNote,
+});
 
 export type InputMessage = {
   role: "system" | "user" | "assistant";
@@ -44,171 +97,177 @@ export const plannerCommandsJsonSchema = {
       type: "array",
       items: {
         anyOf: [
-          {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              type: { type: "string", enum: ["create_tasks"] },
-              payload: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  tasks: {
-                    type: "array",
-                    minItems: 1,
-                    items: {
-                      type: "object",
-                      additionalProperties: false,
-                      properties: {
-                        title: { type: "string" },
-                        estimateMinutes: positiveInt,
-                        dueDate: nullableIsoDateString,
-                        priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
-                        locked: { type: "boolean" },
-                        note: {
-                          anyOf: [
-                            { type: "string", maxLength: 500 },
-                            { type: "null" },
-                          ],
-                        },
-                      },
-                      required: [
-                        "title",
-                        "estimateMinutes",
-                        "dueDate",
-                        "priority",
-                        "locked",
-                        "note",
-                      ],
-                    },
-                  },
-                  requestId: nullableString,
-                },
-                required: ["tasks", "requestId"],
-              },
-            },
-            required: ["type", "payload"],
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              type: { type: "string", enum: ["log_completion"] },
-              payload: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  taskId: nullableString,
-                  title: nullableString,
-                  minutesSpent: { anyOf: [positiveInt, { type: "null" }] },
-                  markDone: { type: "boolean" },
-                  note: {
-                    anyOf: [
-                      { type: "string", maxLength: 500 },
-                      { type: "null" },
-                    ],
-                  },
-                  loggedAt: { anyOf: [isoDateTimeString, { type: "null" }] },
-                },
-                required: [
-                  "taskId",
-                  "title",
-                  "minutesSpent",
-                  "markDone",
-                  "note",
-                  "loggedAt",
-                ],
-              },
-            },
-            required: ["type", "payload"],
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              type: { type: "string", enum: ["shrink_task"] },
-              payload: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  taskId: { type: "string" },
-                  newRemainingMinutes: nonNegativeInt,
-                  previousEstimateMinutes: { anyOf: [positiveInt, { type: "null" }] },
-                  reason: {
-                    anyOf: [
-                      { type: "string", maxLength: 300 },
-                      { type: "null" },
-                    ],
-                  },
-                },
-                required: [
-                  "taskId",
-                  "newRemainingMinutes",
-                  "previousEstimateMinutes",
-                  "reason",
-                ],
-              },
-            },
-            required: ["type", "payload"],
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              type: { type: "string", enum: ["add_blackout"] },
-              payload: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  startDate: isoDateString,
-                  endDate: isoDateString,
-                  reason: { type: "string" },
-                },
-                required: ["startDate", "endDate", "reason"],
-              },
-            },
-            required: ["type", "payload"],
-          },
-          {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              type: { type: "string", enum: ["add_urgent_task"] },
-              payload: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
+          strictObject({
+            type: { type: "string", enum: ["create_tasks"] },
+            payload: strictObject({
+              tasks: {
+                type: "array",
+                minItems: 1,
+                items: strictObject({
                   title: { type: "string" },
                   estimateMinutes: positiveInt,
-                  dueDate: isoDateString,
+                  dueDate: nullableIsoDateString,
                   priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
-                  windowDays: positiveInt,
-                  note: {
-                    anyOf: [
-                      { type: "string", maxLength: 500 },
-                      { type: "null" },
-                    ],
-                  },
-                  reason: {
-                    anyOf: [
-                      { type: "string", maxLength: 300 },
-                      { type: "null" },
-                    ],
-                  },
-                },
-                required: [
-                  "title",
-                  "estimateMinutes",
-                  "dueDate",
-                  "priority",
-                  "windowDays",
-                  "note",
-                  "reason",
-                ],
+                  locked: { type: "boolean" },
+                  note: nullableNote,
+                }),
               },
-            },
-            required: ["type", "payload"],
-          },
+              requestId: nullableString,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["log_completion"] },
+            payload: strictObject({
+              taskId: nullableString,
+              title: nullableString,
+              minutesSpent: { anyOf: [positiveInt, { type: "null" }] },
+              markDone: { type: "boolean" },
+              note: nullableNote,
+              loggedAt: { anyOf: [isoDateTimeString, { type: "null" }] },
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["shrink_task"] },
+            payload: strictObject({
+              taskId: { type: "string" },
+              newRemainingMinutes: nonNegativeInt,
+              previousEstimateMinutes: nullablePositiveInt,
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["add_blackout"] },
+            payload: strictObject({
+              startDate: isoDateString,
+              endDate: isoDateString,
+              reason: { type: "string" },
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["update_blackout_window"] },
+            payload: strictObject({
+              target: blackoutLocatorJson,
+              startDate: nullableIsoDateString,
+              endDate: nullableIsoDateString,
+              reason: nullableString,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["delete_blackout_window"] },
+            payload: strictObject({
+              target: blackoutLocatorJson,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["add_urgent_task"] },
+            payload: strictObject({
+              title: { type: "string" },
+              estimateMinutes: positiveInt,
+              dueDate: isoDateString,
+              priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+              windowDays: positiveInt,
+              note: nullableNote,
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["update_task_fields"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              title: nullableString,
+              estimateHours: nullablePositiveNumber,
+              remainingHours: nullableNonNegativeNumber,
+              dueDate: nullableIsoDateString,
+              priority: nullablePriority,
+              note: nullableNote,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["reschedule_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              dueDate: nullableIsoDateString,
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["reprioritize_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["pause_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["resume_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["delete_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["restore_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["split_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              parts: {
+                type: "array",
+                minItems: 2,
+                items: splitPartJson,
+              },
+              reason: nullableReason,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["merge_tasks"] },
+            payload: strictObject({
+              targets: {
+                type: "array",
+                minItems: 2,
+                items: taskLocatorJson,
+              },
+              title: { type: "string" },
+              estimateHours: nullablePositiveNumber,
+              remainingHours: nullableNonNegativeNumber,
+              dueDate: nullableIsoDateString,
+              priority: nullablePriority,
+              note: nullableNote,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["mark_task_done"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              note: nullableNote,
+            }),
+          }),
+          strictObject({
+            type: { type: "string", enum: ["reopen_task"] },
+            payload: strictObject({
+              target: taskLocatorJson,
+              remainingHours: nonNegativeNumber,
+              note: nullableNote,
+            }),
+          }),
         ],
       },
     },
@@ -216,7 +275,7 @@ export const plannerCommandsJsonSchema = {
   required: ["commands"],
 } as const;
 
-const dateOnlyKeys = new Set(["startDate", "endDate", "dueDate"]);
+const dateOnlyKeys = new Set(["startDate", "endDate", "dueDate", "plannedDate"]);
 
 export const coerceDateOnlyFields = <T>(value: T): T => {
   if (Array.isArray(value)) {
@@ -227,7 +286,7 @@ export const coerceDateOnlyFields = <T>(value: T): T => {
     const result: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
       if (dateOnlyKeys.has(key) && typeof nested === "string") {
-        const match = /^([0-9]{4}-[0-9]{2}-[0-9]{2})(?=[T\s])/.exec(nested);
+        const match = /^([0-9]{4}-[0-9]{2}-[0-9]{2})/.exec(nested.trim());
         result[key] = match ? match[1] : nested;
         continue;
       }

@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 type PlannerTask = Pick<
   Task,
-  "id" | "title" | "estimateMinutes" | "actualMinutes" | "dueDate" | "priority" | "plannedDate" | "createdAt"
+  "id" | "title" | "estimateMinutes" | "actualMinutes" | "remainingMinutes" | "dueDate" | "priority" | "plannedDate" | "createdAt" | "note"
 > & {
   status: TaskStatus;
 };
@@ -44,22 +44,27 @@ const databaseLabel = (() => {
 })();
 
 const statusTone: Record<TaskStatus, string> = {
-  planned: "bg-muted text-muted-foreground",
-  in_progress: "bg-primary/15 text-primary",
-  done: "bg-success/15 text-success",
-  dropped: "bg-danger/15 text-danger",
+  active: "bg-primary/15 text-primary",
+  paused: "bg-muted text-muted-foreground",
+  completed: "bg-success/15 text-success",
+  archived: "bg-border text-muted-foreground",
 };
 
 const statusLabel: Record<TaskStatus, string> = {
-  planned: "planned",
-  in_progress: "in progress",
-  done: "done",
-  dropped: "dropped",
+  active: "active",
+  paused: "paused",
+  completed: "completed",
+  archived: "archived",
 };
 
-const computeRemainingHours = (estimateMinutes: number, actualMinutes: number | null): number => {
-  const remainingMinutes = Math.max(estimateMinutes - (actualMinutes ?? 0), 0);
-  return Math.round((remainingMinutes / 60) * 10) / 10;
+const computeRemainingHours = (
+  estimateMinutes: number,
+  actualMinutes: number | null,
+  remainingMinutes: number | null,
+): number => {
+  const derivedRemaining = remainingMinutes ?? estimateMinutes - (actualMinutes ?? 0);
+  const clamped = Math.max(derivedRemaining, 0);
+  return Math.round((clamped / 60) * 10) / 10;
 };
 
 const formatHours = (hours: number): string => (Number.isInteger(hours) ? hours.toString() : hours.toFixed(1));
@@ -81,13 +86,14 @@ const parseTaskId = (raw: string | string[] | undefined): string | undefined => 
 
 const toDerivedTask = (task: PlannerTask): TaskWithDerived => ({
   ...task,
-  remainingHours: computeRemainingHours(task.estimateMinutes, task.actualMinutes),
+  remainingHours: computeRemainingHours(task.estimateMinutes, task.actualMinutes, task.remainingMinutes ?? null),
 });
 
 export default async function TasksPage({ searchParams }: TasksPageProps) {
   const resolvedSearchParams = await searchParams;
 
   const rawTasks = await prisma.task.findMany({
+    where: { deletedAt: null },
     orderBy: [
       { priority: "desc" },
       { dueDate: "asc" },
@@ -102,10 +108,12 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
       status: task.status as TaskStatus,
       estimateMinutes: task.estimateMinutes,
       actualMinutes: task.actualMinutes,
+      remainingMinutes: task.remainingMinutes,
       dueDate: task.dueDate,
       priority: task.priority,
       plannedDate: task.plannedDate,
       createdAt: task.createdAt,
+      note: task.note,
     }),
   );
 
@@ -147,7 +155,7 @@ export default async function TasksPage({ searchParams }: TasksPageProps) {
               {tasks.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-border/60 bg-muted/40 px-4 py-6 text-sm text-muted-foreground">
                   当前数据库暂无任务（{databaseLabel}）。点击右上角添加一个，或运行
-                  <code className="mx-1 rounded bg-surface px-2 py-1 text-[11px]">DATABASE_URL=&quot;file:./prisma/dev.db&quot; pnpm seed</code>
+                  <code className="mx-1 rounded bg-surface px-2 py-1 text-[11px]">DATABASE_URL=&quot;file:./dev.db&quot; pnpm seed</code>
                   载入示例数据。
                 </div>
               ) : (

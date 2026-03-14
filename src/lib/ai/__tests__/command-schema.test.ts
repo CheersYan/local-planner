@@ -6,11 +6,19 @@ import {
   aiCommandBatchSchema,
   aiCommandSchema,
   aiReadableContextSchema,
+  DeleteBlackoutWindowCommand,
   LogCompletionCommand,
+  ReopenTaskCommand,
   ShrinkTaskCommand,
+  UpdateBlackoutWindowCommand,
+  UpdateTaskFieldsCommand,
   addBlackoutCommandSchema,
+  deleteBlackoutWindowCommandSchema,
   logCompletionCommandSchema,
+  reopenTaskCommandSchema,
   shrinkTaskCommandSchema,
+  updateBlackoutWindowCommandSchema,
+  updateTaskFieldsCommandSchema,
 } from "../command-schema";
 
 const commandFixtures: AiCommand[] = [
@@ -59,6 +67,21 @@ const commandFixtures: AiCommand[] = [
     },
   },
   {
+    type: "update_blackout_window",
+    payload: {
+      target: { blackoutId: "blk-1" },
+      startDate: "2026-03-19",
+      endDate: "2026-03-21",
+      reason: "家庭安排",
+    },
+  },
+  {
+    type: "delete_blackout_window",
+    payload: {
+      target: { startDate: "2026-03-18", endDate: "2026-03-20" },
+    },
+  },
+  {
     type: "add_urgent_task",
     payload: {
       title: "Hotfix billing",
@@ -70,10 +93,85 @@ const commandFixtures: AiCommand[] = [
       locked: false,
     },
   },
+  {
+    type: "update_task_fields",
+    payload: {
+      target: { taskId: "task-rename" },
+      title: "New title",
+    },
+  },
+  {
+    type: "reschedule_task",
+    payload: {
+      target: { taskId: "task-move" },
+      dueDate: "2026-03-18",
+      reason: "Move deadline",
+    },
+  },
+  {
+    type: "reprioritize_task",
+    payload: {
+      target: { taskId: "task-priority" },
+      priority: 3,
+      reason: "High visibility",
+    },
+  },
+  {
+    type: "pause_task",
+    payload: { target: { taskId: "task-pause" }, reason: "Blocked" },
+  },
+  {
+    type: "resume_task",
+    payload: { target: { taskId: "task-resume" } },
+  },
+  {
+    type: "delete_task",
+    payload: { target: { taskId: "task-delete" }, reason: "duplicate" },
+  },
+  {
+    type: "restore_task",
+    payload: { target: { taskId: "task-restore" } },
+  },
+  {
+    type: "split_task",
+    payload: {
+      target: { taskId: "task-split" },
+      parts: [
+        { title: "Part A", estimateMinutes: 120, dueDate: null, note: null },
+        { title: "Part B", estimateMinutes: 60, dueDate: null, note: null },
+      ],
+      reason: "Too big",
+    },
+  },
+  {
+    type: "merge_tasks",
+      payload: {
+        targets: [{ taskId: "task-a" }, { taskId: "task-b" }],
+        title: "Merged task",
+        remainingMinutes: 180,
+        dueDate: null,
+        note: null,
+      },
+    },
+  {
+    type: "mark_task_done",
+    payload: {
+      target: { taskId: "task-done" },
+      note: null,
+    },
+  },
+  {
+    type: "reopen_task",
+    payload: {
+      target: { taskId: "task-reopen" },
+      remainingMinutes: 90,
+      note: null,
+    },
+  },
 ];
 
 describe("aiCommandSchema", () => {
-  it("accepts the five command fixtures", () => {
+  it("accepts all command fixtures", () => {
     for (const fixture of commandFixtures) {
       expect(() => aiCommandSchema.parse(fixture)).not.toThrow();
     }
@@ -133,7 +231,7 @@ describe("aiCommandSchema", () => {
         {
           id: "task-existing",
           title: "Existing backlog item",
-          status: "planned",
+          status: "active",
           estimateMinutes: 120,
           dueDate: "2026-03-25",
           plannedDate: "2026-03-22",
@@ -145,7 +243,7 @@ describe("aiCommandSchema", () => {
 
     expect(context.tasks[0]).toMatchObject({
       id: "task-existing",
-      status: "planned",
+      status: "active",
     });
   });
 
@@ -166,7 +264,7 @@ describe("aiCommandSchema", () => {
         {
           id: "task-context",
           title: "Review PR",
-          status: "planned",
+          status: "paused",
           estimateMinutes: 120,
           actualMinutes: 30,
           remainingMinutes: 70,
@@ -193,5 +291,90 @@ describe("aiCommandSchema", () => {
 
   it("allows empty command batches when nothing should be executed", () => {
     expect(() => aiCommandBatchSchema.parse([])).not.toThrow();
+  });
+
+  it("rejects update_task_fields when no fields besides target are provided", () => {
+    const invalid: UpdateTaskFieldsCommand = {
+      type: "update_task_fields",
+      payload: { target: { taskId: "task-empty" } },
+    };
+
+    expect(() => updateTaskFieldsCommandSchema.parse(invalid)).toThrow(/At least one field/i);
+  });
+
+  it("accepts update_task_fields renames only", () => {
+    const renameOnly: UpdateTaskFieldsCommand = {
+      type: "update_task_fields",
+      payload: { target: { taskId: "task-1" }, title: "写最终方案" },
+    };
+
+    expect(() => updateTaskFieldsCommandSchema.parse(renameOnly)).not.toThrow();
+  });
+
+  it("accepts update_task_fields estimate + dueDate + priority", () => {
+    const combo: UpdateTaskFieldsCommand = {
+      type: "update_task_fields",
+      payload: {
+        target: { taskId: "task-2" },
+        estimateMinutes: 180,
+        dueDate: "2026-03-25",
+        priority: 3,
+      },
+    };
+
+    expect(() => updateTaskFieldsCommandSchema.parse(combo)).not.toThrow();
+  });
+
+  it("accepts update_task_fields clearing note", () => {
+    const clearNote: UpdateTaskFieldsCommand = {
+      type: "update_task_fields",
+      payload: { target: { taskId: "task-3" }, note: null },
+    };
+
+    expect(() => updateTaskFieldsCommandSchema.parse(clearNote)).not.toThrow();
+  });
+
+  it("accepts split_task with two parts", () => {
+    expect(() => aiCommandSchema.parse(commandFixtures.find((c) => c.type === "split_task"))).not.toThrow();
+  });
+
+  it("accepts reopen_task with remainingMinutes", () => {
+    const reopen: ReopenTaskCommand = {
+      type: "reopen_task",
+      payload: { target: { taskId: "task-x" }, remainingMinutes: 30 },
+    };
+
+    expect(() => reopenTaskCommandSchema.parse(reopen)).not.toThrow();
+  });
+
+  it("requires update_blackout_window to provide at least one field", () => {
+    const invalid: UpdateBlackoutWindowCommand = {
+      type: "update_blackout_window",
+      payload: { target: { blackoutId: "blk-1" } },
+    } as UpdateBlackoutWindowCommand;
+
+    expect(() => updateBlackoutWindowCommandSchema.parse(invalid)).toThrow(/At least one field/i);
+  });
+
+  it("rejects update_blackout_window when end precedes start", () => {
+    const invalid: UpdateBlackoutWindowCommand = {
+      type: "update_blackout_window",
+      payload: {
+        target: { blackoutId: "blk-1" },
+        startDate: "2026-03-21",
+        endDate: "2026-03-20",
+      },
+    } as UpdateBlackoutWindowCommand;
+
+    expect(() => updateBlackoutWindowCommandSchema.parse(invalid)).toThrow(/after start/i);
+  });
+
+  it("requires blackout locator date ranges to be paired", () => {
+    const invalid: DeleteBlackoutWindowCommand = {
+      type: "delete_blackout_window",
+      payload: { target: { startDate: "2026-03-20" } },
+    };
+
+    expect(() => deleteBlackoutWindowCommandSchema.parse(invalid)).toThrow(/provided together/i);
   });
 });

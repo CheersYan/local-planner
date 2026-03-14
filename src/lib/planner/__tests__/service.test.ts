@@ -10,13 +10,17 @@ const TODAY = new Date("2026-03-11T00:00:00Z");
 const createTask = (overrides: Partial<Task> & { id: string }): Task => ({
   id: overrides.id,
   title: overrides.title ?? overrides.id,
-  status: overrides.status ?? "planned",
+  status: overrides.status ?? "active",
   estimateMinutes: overrides.estimateMinutes ?? 60,
+  remainingMinutes: overrides.remainingMinutes ?? overrides.estimateMinutes ?? 60,
   actualMinutes: overrides.actualMinutes ?? null,
   dueDate: overrides.dueDate ?? null,
   plannedDate: overrides.plannedDate ?? null,
   priority: overrides.priority ?? 1,
   locked: overrides.locked ?? false,
+  note: overrides.note ?? null,
+  parentTaskId: overrides.parentTaskId ?? null,
+  deletedAt: overrides.deletedAt ?? null,
   createdAt: overrides.createdAt ?? BASE_DATE,
   updatedAt: overrides.updatedAt ?? BASE_DATE,
 });
@@ -387,7 +391,7 @@ describe("generatePlanSlots", () => {
     expect(Object.values(byDate).every((daySlots) => uniqueTaskCount(daySlots) <= 2)).toBe(true);
   });
 
-  it("treats an invalid task status as planned instead of dropping the task", async () => {
+  it("treats an invalid task status as active instead of dropping the task", async () => {
     const client = new FakePlannerClient({
       tasks: [
         createTask({

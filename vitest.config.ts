@@ -1,6 +1,8 @@
 import path from "path";
 import { defineConfig } from "vitest/config";
 
+const databaseUrl = `file:${path.join(__dirname, "prisma", "dev.db")}`;
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -9,5 +11,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    env: {
+      DATABASE_URL: databaseUrl,
+    },
   },
 });

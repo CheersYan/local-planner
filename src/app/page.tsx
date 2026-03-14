@@ -1,6 +1,6 @@
 import { AiChatPanel } from "@/components/ai/ai-chat-panel";
 
-type PlanTaskStatus = "planned" | "in_progress" | "done";
+type PlanTaskStatus = "active" | "completed" | "paused";
 
 type PlanTask = {
   id: string;
@@ -50,9 +50,9 @@ const planDays: PlanDay[] = [
     capacityMinutes: 420,
     loadMinutes: 360,
     tasks: [
-      { id: "t1", title: "迭代交付：核心验收用例", status: "in_progress", minutes: 180 },
-      { id: "t2", title: "设计探讨论证（UI+交互）", status: "planned", minutes: 120, note: "14:00 起" },
-      { id: "t3", title: "补充测试用例与截图", status: "planned", minutes: 60 },
+      { id: "t1", title: "迭代交付：核心验收用例", status: "active", minutes: 180 },
+      { id: "t2", title: "设计探讨论证（UI+交互）", status: "active", minutes: 120, note: "14:00 起" },
+      { id: "t3", title: "补充测试用例与截图", status: "active", minutes: 60 },
     ],
   },
   {
@@ -63,9 +63,9 @@ const planDays: PlanDay[] = [
     capacityMinutes: 420,
     loadMinutes: 300,
     tasks: [
-      { id: "t4", title: "迭代交付：文案 & 边缘态", status: "planned", minutes: 150 },
-      { id: "t5", title: "回顾前准备：数据截图", status: "planned", minutes: 90 },
-      { id: "t6", title: "Inbox 清理与排期校验", status: "planned", minutes: 60 },
+      { id: "t4", title: "迭代交付：文案 & 边缘态", status: "active", minutes: 150 },
+      { id: "t5", title: "回顾前准备：数据截图", status: "active", minutes: 90 },
+      { id: "t6", title: "Inbox 清理与排期校验", status: "active", minutes: 60 },
     ],
   },
   {
@@ -76,8 +76,8 @@ const planDays: PlanDay[] = [
     capacityMinutes: 240,
     loadMinutes: 210,
     tasks: [
-      { id: "t7", title: "黑名单窗口", status: "done", minutes: 180, note: "09:00–12:00 不可用" },
-      { id: "t8", title: "验收回放 + 录屏", status: "planned", minutes: 90 },
+      { id: "t7", title: "黑名单窗口", status: "completed", minutes: 180, note: "09:00–12:00 不可用" },
+      { id: "t8", title: "验收回放 + 录屏", status: "active", minutes: 90 },
     ],
   },
   {
@@ -88,8 +88,8 @@ const planDays: PlanDay[] = [
     capacityMinutes: 420,
     loadMinutes: 240,
     tasks: [
-      { id: "t9", title: "完善迭代交付包", status: "planned", minutes: 150 },
-      { id: "t10", title: "周回顾 & 议题整理", status: "planned", minutes: 90 },
+      { id: "t9", title: "完善迭代交付包", status: "active", minutes: 150 },
+      { id: "t10", title: "周回顾 & 议题整理", status: "active", minutes: 90 },
     ],
   },
 ];
@@ -159,8 +159,8 @@ const planProgress = (loadMinutes: number, capacityMinutes: number): number => {
 };
 
 const statusBadge = (status: PlanTaskStatus): string => {
-  if (status === "done") return "bg-success/15 text-success";
-  if (status === "in_progress") return "bg-primary/15 text-primary";
+  if (status === "completed") return "bg-success/15 text-success";
+  if (status === "active") return "bg-primary/15 text-primary";
   return "bg-muted text-muted-foreground";
 };
 

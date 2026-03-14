@@ -11,6 +11,7 @@ import {
 
 import type { AiCommandBatch } from "@/lib/ai/command-schema";
 import { sendAiMessage, type AiRouteError } from "@/lib/ai/ai-client";
+import type { CommandResult } from "@/lib/commands/types";
 import { CommandPreviewList } from "./command-preview-list";
 
 type ChatMessage = {
@@ -65,6 +66,18 @@ const quickPrompts: QuickPrompt[] = [
     hint: "add_urgent_task",
     text: "新增紧急任务：修复支付回退 bug，预估 120 分钟，截止 2026-03-18，原因是上线 blocker。",
   },
+  {
+    id: "qp-edit",
+    label: "修改任务",
+    hint: "update_task_fields",
+    text: "把 demo 任务改名成产品 demo，并将剩余工时设为 3 小时，截止 2026-03-28，优先级 urgent。",
+  },
+  {
+    id: "qp-pause",
+    label: "暂停任务",
+    hint: "pause_task",
+    text: "把“测试任务”暂停一下，原因等待依赖。",
+  },
 ];
 
 const makeId = (): string =>
@@ -96,6 +109,9 @@ export function AiChatPanel({
   const [isSending, setIsSending] = useState(false);
   const [hasResult, setHasResult] = useState(resolvedHasResult);
   const [error, setError] = useState<string | null>(initialError);
+  const [previewResults, setPreviewResults] = useState<CommandResult[] | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isExecuting, setIsExecuting] = useState(false);
 
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -108,6 +124,30 @@ export function AiChatPanel({
     if (commands.length === 0) return "等待解析结果";
     return `识别到 ${commands.length} 个操作`;
   }, [commands.length, hasResult]);
+
+  const runPreview = async (batch: AiCommandBatch) => {
+    if (batch.length === 0) {
+      setPreviewResults(null);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/commands", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "preview", commands: batch }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? "预览失败");
+      }
+      setPreviewResults(data.results ?? null);
+      setStatusMessage(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "预览失败";
+      setStatusMessage(message);
+    }
+  };
 
   const handleSend = async () => {
     const trimmed = input.trim();
@@ -128,6 +168,7 @@ export function AiChatPanel({
       const response = await sendAiMessage({ message: trimmed, chatId });
       setChatId(response.chatId);
       setCommands(response.commands);
+      void runPreview(response.commands);
       setHasResult(true);
 
       const assistantMessage: ChatMessage = {
@@ -164,6 +205,38 @@ export function AiChatPanel({
     setInput(text);
   };
 
+  const handleExecute = async () => {
+    if (commands.length === 0 || isExecuting) return;
+    setIsExecuting(true);
+    setStatusMessage(null);
+
+    try {
+      const response = await fetch("/api/commands", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "execute", commands }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? "执行失败");
+      }
+
+      setPreviewResults(data.results ?? null);
+      setStatusMessage(data.replanTriggered ? "执行成功，已触发重排" : "执行成功");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "执行失败，请稍后重试。";
+      setStatusMessage(message);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (commands.length > 0 && !isSending) {
+      void runPreview(commands);
+    }
+  }, [commands, isSending]);
+
   const emptyState = (
     <div className="rounded-2xl border border-dashed border-border/60 bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
       还没有消息。输入一句话或点击下方提示，系统会调用本地 /api/ai 路由解析为可预览的命令，不会直接执行。
@@ -176,11 +249,11 @@ export function AiChatPanel({
         <div className="space-y-1">
           <h2 className="text-lg font-semibold tracking-tight">Chat & commands</h2>
           <p className="text-sm text-muted-foreground">
-            发送自然语言，调用现有 POST /api/ai，返回“识别到的操作”仅供预览，不会写数据库。
+            发送自然语言，先经 /api/ai 解析，再在本地预览 / 执行命令（事务 + 重排，数据库为真）。
           </p>
         </div>
         <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          preview only
+          preview + execute
         </span>
       </div>
 
@@ -271,7 +344,27 @@ export function AiChatPanel({
         ) : null}
       </form>
 
-      <CommandPreviewList commands={commands} isLoading={isSending} hasResult={hasResult} />
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => void handleExecute()}
+          disabled={commands.length === 0 || isExecuting}
+          className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wide text-primary-foreground shadow-md transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          {isExecuting ? "执行中…" : "执行这些命令"}
+        </button>
+        {statusMessage ? (
+          <span className="text-xs text-muted-foreground">{statusMessage}</span>
+        ) : null}
+      </div>
+
+      <CommandPreviewList
+        commands={commands}
+        results={previewResults}
+        isLoading={isSending}
+        hasResult={hasResult}
+        statusMessage={statusMessage}
+      />
     </div>
   );
 }

@@ -75,8 +75,6 @@ export function draftPlan(snapshot: PlannerSnapshot, options: PlannerOptions = {
 
   for (const slot of normalizedPlanSlots) {
     const task = taskById.get(slot.taskId);
-    const status = task?.status ?? "planned";
-    const isDoneOrDropped = status === "done" || status === "dropped";
 
     if (compareDates(slot.slotDate, horizonStart) < 0) {
       frozenSlots.push(slot);
@@ -96,7 +94,7 @@ export function draftPlan(snapshot: PlannerSnapshot, options: PlannerOptions = {
         lockedOverflowSlots.push(slot);
       } else if (compareDates(slot.slotDate, horizonEnd) > 0) {
         outsideLookaheadSlots.push(slot);
-      } else if (!isDoneOrDropped) {
+      } else {
         workingLockedSlots.push(slot);
       }
 
@@ -107,14 +105,10 @@ export function draftPlan(snapshot: PlannerSnapshot, options: PlannerOptions = {
   }
 
   const tasksNeedingMinutes: TaskWork[] = snapshot.tasks
-    .filter((task) => task.status !== "done" && task.status !== "dropped")
+    .filter((task) => task.status === "active")
     .map((task, index) => {
-      const remainingMinutes = Math.max(
-        0,
-        normalizeMinutes(task.estimateMinutes) -
-          normalizeMinutes(task.actualMinutes) -
-          (lockedMinutesByTask.get(task.id) ?? 0),
-      );
+      const baseRemaining = task.remainingMinutes ?? normalizeMinutes(task.estimateMinutes) - normalizeMinutes(task.actualMinutes);
+      const remainingMinutes = Math.max(0, normalizeMinutes(baseRemaining) - (lockedMinutesByTask.get(task.id) ?? 0));
 
       return {
         task,

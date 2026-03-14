@@ -12,7 +12,7 @@ type SnapshotInput = Partial<PlannerSnapshot> & {
 const createTask = (overrides: Partial<PlannerTask> & { id: string }): PlannerTask => ({
   id: overrides.id,
   title: overrides.title ?? overrides.id,
-  status: overrides.status ?? "planned",
+  status: overrides.status ?? "active",
   estimateMinutes: overrides.estimateMinutes ?? 60,
   actualMinutes: overrides.actualMinutes,
   dueDate: overrides.dueDate,
@@ -245,7 +245,7 @@ describe("draftPlan", () => {
 
     const snapshot = buildSnapshot({
       tasks: [
-        createTask({ id: "done-task", status: "done", estimateMinutes: 60 }),
+        createTask({ id: "done-task", status: "completed", estimateMinutes: 60 }),
         createTask({ id: "fresh", estimateMinutes: 120 }),
       ],
       planSlots: [pastSlot],

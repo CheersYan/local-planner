@@ -21,21 +21,29 @@ model Setting {
 model Task {
   id              String         @id @default(cuid())
   title           String
-  status          String         @default("planned")
+  status          String         @default("active")
   estimateMinutes Int
+  remainingMinutes Int?
   actualMinutes   Int?
   dueDate         DateTime?
   plannedDate     DateTime?
   priority        Int            @default(0)
   locked          Boolean        @default(false)
+  note            String?
+  parentTaskId    String?
+  deletedAt       DateTime?
   planSlots       PlanSlot[]
   completions     CompletionLog[]
+  parentTask      Task?          @relation("TaskChildren", fields: [parentTaskId], references: [id])
+  children        Task[]         @relation("TaskChildren")
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
   @@index([status])
   @@index([plannedDate])
   @@index([dueDate])
+  @@index([parentTaskId])
+  @@index([deletedAt])
   @@map("task")
 }
 

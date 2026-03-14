@@ -9,7 +9,7 @@ import {
 
 import { logCompletion, type CompletionFormState } from "./actions";
 
-type PlannerTaskStatus = "planned" | "in_progress" | "done" | "dropped";
+type PlannerTaskStatus = "active" | "paused" | "completed" | "archived";
 
 export type CompletionFormTask = {
   id: string;
@@ -56,6 +56,12 @@ const initialState: CompletionFormState = {
 };
 
 const formatHours = (hours: number): string => (Number.isInteger(hours) ? hours.toString() : hours.toFixed(1));
+const statusText: Record<PlannerTaskStatus, string> = {
+  active: "active",
+  paused: "paused",
+  completed: "completed",
+  archived: "archived",
+};
 
 export function CompletionForm({ tasks, defaultDate }: CompletionFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
@@ -95,8 +101,7 @@ export function CompletionForm({ tasks, defaultDate }: CompletionFormProps) {
             </option>
             {tasks.map((task) => (
               <option key={task.id} value={task.id}>
-                {task.title} · Remaining {formatHours(task.remainingHours)}h · status{" "}
-                {task.status.replace("_", " ")}
+                {task.title} · Remaining {formatHours(task.remainingHours)}h · status {statusText[task.status]}
               </option>
             ))}
           </select>

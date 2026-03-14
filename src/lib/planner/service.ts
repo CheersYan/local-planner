@@ -71,7 +71,7 @@ export const generatePlanSlots = async (
 
   return client.$transaction(async (tx) => {
     const [tasks, planSlots, blackoutWindows, settingRecords] = await Promise.all([
-      tx.task.findMany(),
+      tx.task.findMany({ where: { deletedAt: null } }),
       tx.planSlot.findMany(),
       tx.blackoutWindow.findMany(),
       tx.setting.findMany(),
@@ -126,6 +126,7 @@ const toPlannerTask = (task: Task): PlannerTask => ({
   title: task.title,
   status: normalizeTaskStatus(task.status),
   estimateMinutes: task.estimateMinutes,
+  remainingMinutes: task.remainingMinutes ?? undefined,
   actualMinutes: task.actualMinutes ?? undefined,
   dueDate: toOptionalISODate(task.dueDate),
   plannedDate: toOptionalISODate(task.plannedDate),
@@ -220,11 +221,11 @@ const mergeBlackouts = (
 };
 
 const normalizeTaskStatus = (status: string): PlannerTask["status"] => {
-  if (status === "in_progress" || status === "done" || status === "dropped" || status === "planned") {
+  if (status === "active" || status === "paused" || status === "completed" || status === "archived") {
     return status;
   }
 
-  return "planned";
+  return "active";
 };
 
 const toOptionalISODate = (value: Date | null): string | undefined => {

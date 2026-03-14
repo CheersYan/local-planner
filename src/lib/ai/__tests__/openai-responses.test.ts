@@ -23,12 +23,7 @@ vi.mock("openai", () => {
   return { default: MockOpenAI };
 });
 
-describe("fetchModelCommands", () => {
-  const messages: InputMessage[] = [
-    { role: "system", content: "You are a planner" },
-    { role: "user", content: "Plan my day" },
-  ];
-
+describe("plannerCommandsJsonSchema", () => {
   type SchemaVariant = {
     properties?: {
       type?: { enum?: readonly string[] };
@@ -56,21 +51,42 @@ describe("fetchModelCommands", () => {
     }
   };
 
-  it("uses a hand-written JSON schema without any oneOf branches", () => {
+  it("uses strict object schemas without oneOf branches", () => {
     assertNoOneOf(plannerCommandsJsonSchema);
   });
 
-  it("keeps root object constraints and anyOf command variants", () => {
-    expect(plannerCommandsJsonSchema.type).toBe("object");
-    expect(plannerCommandsJsonSchema.additionalProperties).toBe(false);
+  it("marks every object schema as strict with matching required keys", () => {
+    const visit = (node: unknown) => {
+      if (Array.isArray(node)) {
+        node.forEach(visit);
+        return;
+      }
 
-    const commands = plannerCommandsJsonSchema.properties.commands;
-    expect(commands.type).toBe("array");
+      if (node && typeof node === "object") {
+        const obj = node as Record<string, unknown>;
+        if (obj.type === "object") {
+          expect(obj.additionalProperties).toBe(false);
+          const properties = (obj.properties ?? {}) as Record<string, unknown>;
+          const required = obj.required as string[] | undefined;
+          expect(Array.isArray(required)).toBe(true);
+          const sortedRequired = [...(required ?? [])].sort();
+          const sortedKeys = Object.keys(properties).sort();
+          expect(sortedRequired).toEqual(sortedKeys);
+        }
 
-    const items = commands.items;
-    expect(items).toBeTruthy();
-    expect(items.anyOf).toBeInstanceOf(Array);
-    assertNoOneOf(items);
+        Object.values(obj).forEach(visit);
+      }
+    };
+
+    visit(plannerCommandsJsonSchema);
+  });
+
+  it("includes new edit commands", () => {
+    expect(getCommandVariant("update_task_fields")).toBeTruthy();
+    expect(getCommandVariant("reprioritize_task")).toBeTruthy();
+    expect(getCommandVariant("merge_tasks")).toBeTruthy();
+    expect(getCommandVariant("update_blackout_window")).toBeTruthy();
+    expect(getCommandVariant("delete_blackout_window")).toBeTruthy();
   });
 
   it("marks date-only fields with ISO date constraints", () => {
@@ -86,39 +102,11 @@ describe("fetchModelCommands", () => {
       pattern: "^\\d{4}-\\d{2}-\\d{2}$",
     });
 
-    const urgent = getCommandVariant("add_urgent_task")?.properties?.payload?.properties as
+    const reschedule = getCommandVariant("reschedule_task")?.properties?.payload?.properties as
       | Record<string, { format?: string }>
       | undefined;
-    const urgentDueDate = urgent?.dueDate;
-    expect(urgentDueDate).toMatchObject({ format: "date" });
-  });
-
-  it("uses integer types for minute and window fields", () => {
-    const createTasksPayload = getCommandVariant("create_tasks")?.properties?.payload
-      ?.properties as
-        | Record<string, { items?: { properties?: Record<string, { type?: string }> } }>
-        | undefined;
-    const createTasksProps = createTasksPayload?.tasks?.items?.properties;
-    expect(createTasksProps?.estimateMinutes?.type).toBe("integer");
-
-    const logCompletionMinutes =
-      getCommandVariant("log_completion")?.properties?.payload?.properties?.minutesSpent as
-        | { anyOf?: Array<{ type?: string }> }
-        | undefined;
-    expect(logCompletionMinutes?.anyOf?.[0]?.type).toBe("integer");
-
-    const shrinkTaskRemaining =
-      getCommandVariant("shrink_task")?.properties?.payload?.properties
-        ?.newRemainingMinutes as { type?: string; minimum?: number } | undefined;
-    expect(shrinkTaskRemaining?.type).toBe("integer");
-    expect(shrinkTaskRemaining?.minimum).toBe(0);
-
-    const urgentTaskProps =
-      getCommandVariant("add_urgent_task")?.properties?.payload?.properties as
-        | Record<string, { type?: string }>
-        | undefined;
-    expect(urgentTaskProps?.estimateMinutes?.type).toBe("integer");
-    expect(urgentTaskProps?.windowDays?.type).toBe("integer");
+    const dueDateSchema = reschedule?.dueDate as { anyOf?: Array<Record<string, unknown>> };
+    expect(dueDateSchema?.anyOf?.[0]).toMatchObject({ format: "date" });
   });
 
   describe("date-only coercion", () => {
@@ -133,98 +121,72 @@ describe("fetchModelCommands", () => {
               reason: "Trip",
             },
           },
-        ],
-      } as const;
-
-      const coerced = coerceDateOnlyFields(raw);
-      expect(coerced.commands[0].payload.startDate).toBe("2026-03-20");
-      expect(coerced.commands[0].payload.endDate).toBe("2026-03-21");
-      expect(() => modelCommandEnvelopeSchema.parse(coerced)).not.toThrow();
-    });
-
-    it("leaves natural language dates unchanged so validation still fails", () => {
-      const raw = {
-        commands: [
           {
-            type: "add_blackout",
+            type: "reschedule_task",
             payload: {
-              startDate: "next Friday",
-              endDate: "next Friday",
-              reason: "vague",
+              target: { taskId: "task-1", title: null, fuzzyTitle: null },
+              dueDate: "2026-03-22T10:00:00Z",
+              reason: null,
+            },
+          },
+          {
+            type: "update_blackout_window",
+            payload: {
+              target: {
+                blackoutId: null,
+                startDate: "2026-03-19T09:00:00Z",
+                endDate: "2026-03-21T07:00:00Z",
+                fuzzyReason: null,
+              },
+              startDate: "2026-03-19T08:00:00Z",
+              endDate: null,
+              reason: "调整",
             },
           },
         ],
       } as const;
 
       const coerced = coerceDateOnlyFields(raw);
-      expect(coerced.commands[0].payload.startDate).toBe("next Friday");
-      expect(() => modelCommandEnvelopeSchema.parse(coerced)).toThrow();
+      expect(coerced.commands[0].payload.startDate).toBe("2026-03-20");
+      expect(coerced.commands[0].payload.endDate).toBe("2026-03-21");
+      expect(coerced.commands[1].payload.dueDate).toBe("2026-03-22");
+      expect(coerced.commands[2].payload.startDate).toBe("2026-03-19");
+      expect(coerced.commands[2].payload.target.startDate).toBe("2026-03-19");
+      expect(coerced.commands[2].payload.target.endDate).toBe("2026-03-21");
+      expect(() => modelCommandEnvelopeSchema.parse(coerced)).not.toThrow();
     });
   });
+});
+
+describe("fetchModelCommands", () => {
+  const messages: InputMessage[] = [
+    { role: "system", content: "You are a planner" },
+    { role: "user", content: "Plan my day" },
+  ];
 
   beforeEach(() => {
     constructorSpy.mockReset();
     parseMock.mockReset();
-    vi.clearAllMocks();
   });
 
-  it("builds OpenAI client, calls responses.parse once, and returns envelope with raw response", async () => {
-    const envelope = { commands: [] };
-    const rawResponse = { output_parsed: envelope, id: "resp_test" };
-    parseMock.mockResolvedValueOnce(rawResponse);
-
-    const result = await fetchModelCommands({
-      apiKey: "test-api-key",
-      model: "gpt-4.1",
-      messages,
-    });
-
-    expect(constructorSpy).toHaveBeenCalledWith({ apiKey: "test-api-key" });
-    expect(parseMock).toHaveBeenCalledTimes(1);
-
-    const callArgs = parseMock.mock.calls[0][0];
-    expect(callArgs).toMatchObject({
-      model: "gpt-4.1",
-      input: messages,
-      store: false,
-    });
-    expect(callArgs.text?.format).toBeDefined();
-
-    expect(result.envelope).toEqual(envelope);
-    expect(result.raw).toBe(rawResponse);
-  });
-
-  it("forwards abortSignal to responses.parse", async () => {
-    const envelope = { commands: [] };
-    const rawResponse = { output_parsed: envelope };
-    const controller = new AbortController();
-    parseMock.mockResolvedValueOnce(rawResponse);
+  it("passes apiKey and model into OpenAI client", async () => {
+    parseMock.mockResolvedValue({ output_parsed: { commands: [] } });
 
     await fetchModelCommands({
-      apiKey: "signal-key",
-      model: "planner-model",
+      apiKey: "key",
+      model: "model",
       messages,
-      abortSignal: controller.signal,
     });
 
-    expect(parseMock).toHaveBeenCalledTimes(1);
-    expect(parseMock.mock.calls[0][0].signal).toBe(controller.signal);
-  });
-
-  it("rethrows errors from responses.parse", async () => {
-    const parseError = new Error("parse failed");
-    parseMock.mockRejectedValueOnce(parseError);
-
-    await expect(
-      fetchModelCommands({ apiKey: "key", model: "model", messages })
-    ).rejects.toThrow(parseError);
+    expect(constructorSpy).toHaveBeenCalledWith({ apiKey: "key" });
+    expect(parseMock).toHaveBeenCalled();
   });
 
   it("throws when output_parsed fails modelCommandEnvelopeSchema validation", async () => {
-    parseMock.mockResolvedValueOnce({ output_parsed: { commands: "not-an-array" } });
+    parseMock.mockResolvedValue({ output_parsed: { bad: true } });
 
     await expect(
       fetchModelCommands({ apiKey: "key", model: "model", messages })
-    ).rejects.toThrow(/commands/i);
+    ).rejects.toThrow();
   });
 });

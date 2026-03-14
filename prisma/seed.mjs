@@ -3,7 +3,8 @@
 import { PrismaClient } from '@prisma/client';
 import path from 'node:path';
 
-const DEFAULT_DB_URL = `file:${path.join(process.cwd(), 'prisma', 'dev.db')}`;
+const PRISMA_DIR = path.join(process.cwd(), 'prisma');
+const DEFAULT_DB_URL = `file:${path.join(PRISMA_DIR, 'dev.db')}`;
 
 /**
  * Normalize DATABASE_URL so relative SQLite paths become absolute.
@@ -17,10 +18,12 @@ const resolveDatabaseUrl = (url) => {
 
   if (url.startsWith('file:')) {
     const filePath = url.replace(/^file:/, '');
-
-    if (!path.isAbsolute(filePath)) {
-      return `file:${path.resolve(process.cwd(), filePath)}`;
+    if (path.isAbsolute(filePath)) {
+      return url;
     }
+
+    // Prisma resolves relative SQLite paths from the schema directory.
+    return `file:${path.resolve(PRISMA_DIR, filePath)}`;
   }
 
   return url;
@@ -29,7 +32,7 @@ const resolveDatabaseUrl = (url) => {
 process.env.DATABASE_URL = resolveDatabaseUrl(process.env.DATABASE_URL);
 
 /**
- * @typedef {'planned' | 'in_progress' | 'done' | 'dropped'} TaskStatus
+ * @typedef {'active' | 'paused' | 'completed' | 'archived'} TaskStatus
  *
  * @typedef {Object} TaskSeed
  * @property {string} key
@@ -39,6 +42,8 @@ process.env.DATABASE_URL = resolveDatabaseUrl(process.env.DATABASE_URL);
  * @property {number} priority
  * @property {number} [dueInDays]
  * @property {number} [plannedOffset]
+ * @property {number} [remainingMinutes]
+ * @property {string} [note]
  *
  * @typedef {Object} PlanSlotSeed
  * @property {string} taskKey
@@ -102,29 +107,33 @@ const seedTasks = async (baseDate) => {
     {
       key: 'roadmap',
       title: 'Plan weekly roadmap',
-      status: 'in_progress',
+      status: 'active',
       estimateMinutes: 180,
       priority: 2,
       dueInDays: 2,
       plannedOffset: 0,
+      remainingMinutes: 120,
+      note: 'Kickoff underway',
     },
     {
       key: 'uiHardening',
       title: 'Stabilize UI interactions',
-      status: 'planned',
+      status: 'active',
       estimateMinutes: 240,
       priority: 1,
       dueInDays: 5,
       plannedOffset: 1,
+      remainingMinutes: 240,
     },
     {
       key: 'deepWork',
       title: 'Focus mode research spike',
-      status: 'planned',
+      status: 'active',
       estimateMinutes: 150,
       priority: 0,
       dueInDays: 7,
       plannedOffset: 2,
+      remainingMinutes: 150,
     },
   ];
 
@@ -137,7 +146,9 @@ const seedTasks = async (baseDate) => {
         title: task.title,
         status: task.status,
         estimateMinutes: task.estimateMinutes,
+        remainingMinutes: task.remainingMinutes ?? task.estimateMinutes,
         priority: task.priority,
+        note: task.note ?? null,
         plannedDate:
           task.plannedOffset !== undefined ? addDays(baseDate, task.plannedOffset) : null,
         dueDate: task.dueInDays !== undefined ? addDays(baseDate, task.dueInDays) : null,

@@ -45,14 +45,6 @@ const isValidIsoDateTime = (value: string): boolean => {
   return isValidIsoDate(datePart);
 };
 
-const toUtcDate = (isoDate: string): Date => {
-  const match = isoDatePattern.exec(isoDate);
-  const year = Number(match?.[1]);
-  const month = Number(match?.[2]);
-  const day = Number(match?.[3]);
-  return new Date(Date.UTC(year, month - 1, day));
-};
-
 export const modelIsoDateSchema = z
   .string()
   .regex(isoDatePattern, "Expected ISO date (YYYY-MM-DD)")
@@ -65,6 +57,51 @@ export const modelIsoDateTimeSchema = z
 
 export const modelPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
 export type ModelPriority = z.infer<typeof modelPrioritySchema>;
+
+export const modelTaskStatusSchema = z.enum(["active", "paused", "completed", "archived"]);
+export type ModelTaskStatus = z.infer<typeof modelTaskStatusSchema>;
+
+const modelTaskLocatorSchema = z
+  .object({
+    taskId: z.string().nullable(),
+    title: z.string().nullable(),
+    fuzzyTitle: z.string().nullable(),
+  })
+  .strict()
+  .refine(({ taskId, title, fuzzyTitle }) => Boolean(taskId || title || fuzzyTitle), {
+    message: "taskId, title, or fuzzyTitle is required",
+    path: ["taskId"],
+  });
+
+const modelBlackoutLocatorSchema = z
+  .object({
+    blackoutId: z.string().nullable(),
+    startDate: modelIsoDateSchema.nullable(),
+    endDate: modelIsoDateSchema.nullable(),
+    fuzzyReason: z.string().nullable(),
+  })
+  .strict()
+  .refine(
+    ({ blackoutId, startDate, endDate, fuzzyReason }) =>
+      Boolean(blackoutId || fuzzyReason || (startDate && endDate)),
+    {
+      message: "blackoutId, fuzzyReason, or both startDate and endDate are required",
+      path: ["blackoutId"],
+    },
+  )
+  .refine(({ startDate, endDate }) => Boolean((!startDate && !endDate) || (startDate && endDate)), {
+    message: "startDate and endDate must be provided together",
+    path: ["startDate"],
+  })
+  .refine(({ startDate, endDate }) => {
+    if (startDate && endDate) {
+      return new Date(`${endDate}T00:00:00Z`).getTime() >= new Date(`${startDate}T00:00:00Z`).getTime();
+    }
+    return true;
+  }, {
+    message: "endDate must be on or after startDate",
+    path: ["endDate"],
+  });
 
 const modelCreateTaskSchema = z
   .object({
@@ -155,11 +192,51 @@ export const modelAddBlackoutCommandSchema = z
   })
   .strict()
   .refine(
-    ({ payload }) => toUtcDate(payload.endDate).getTime() >= toUtcDate(payload.startDate).getTime(),
+    ({ payload }) =>
+      new Date(`${payload.endDate}T00:00:00Z`).getTime() >= new Date(`${payload.startDate}T00:00:00Z`).getTime(),
     { message: "endDate must be on or after startDate", path: ["payload", "endDate"] }
   );
 
 export type ModelAddBlackoutCommand = z.infer<typeof modelAddBlackoutCommandSchema>;
+
+export const modelUpdateBlackoutWindowCommandSchema = z
+  .object({
+    type: z.literal("update_blackout_window"),
+    payload: z
+      .object({
+        target: modelBlackoutLocatorSchema,
+        startDate: modelIsoDateSchema.nullable(),
+        endDate: modelIsoDateSchema.nullable(),
+        reason: z.string().nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+  .refine(
+    ({ payload }) =>
+      payload.startDate !== null || payload.endDate !== null || payload.reason !== null,
+    { message: "At least one field besides target must be provided", path: ["payload"] },
+  )
+  .refine(({ payload }) => {
+    if (payload.startDate && payload.endDate) {
+      return new Date(`${payload.endDate}T00:00:00Z`).getTime() >= new Date(`${payload.startDate}T00:00:00Z`).getTime();
+    }
+    return true;
+  }, {
+    message: "endDate must be on or after startDate",
+    path: ["payload", "endDate"],
+  });
+
+export type ModelUpdateBlackoutWindowCommand = z.infer<typeof modelUpdateBlackoutWindowCommandSchema>;
+
+export const modelDeleteBlackoutWindowCommandSchema = z
+  .object({
+    type: z.literal("delete_blackout_window"),
+    payload: z.object({ target: modelBlackoutLocatorSchema }).strict(),
+  })
+  .strict();
+
+export type ModelDeleteBlackoutWindowCommand = z.infer<typeof modelDeleteBlackoutWindowCommandSchema>;
 
 export const modelAddUrgentTaskCommandSchema = z
   .object({
@@ -180,12 +257,207 @@ export const modelAddUrgentTaskCommandSchema = z
 
 export type ModelAddUrgentTaskCommand = z.infer<typeof modelAddUrgentTaskCommandSchema>;
 
+export const modelUpdateTaskFieldsCommandSchema = z
+  .object({
+    type: z.literal("update_task_fields"),
+    payload: z
+      .object({
+        target: modelTaskLocatorSchema,
+        title: z.string().min(1).nullable(),
+        estimateHours: z.number().positive().nullable(),
+        remainingHours: z.number().nonnegative().nullable(),
+        dueDate: modelIsoDateSchema.nullable(),
+        priority: modelPrioritySchema.nullable(),
+        note: z.string().max(500).nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+  .refine(({ payload }) => {
+    const { title, estimateHours, remainingHours, dueDate, priority, note } = payload;
+    return (
+      title !== null ||
+      estimateHours !== null ||
+      remainingHours !== null ||
+      dueDate !== null ||
+      priority !== null ||
+      note !== null
+    );
+  },
+  {
+    message: "At least one field besides target must be provided",
+    path: ["payload"],
+  });
+
+export type ModelUpdateTaskFieldsCommand = z.infer<typeof modelUpdateTaskFieldsCommandSchema>;
+
+export const modelRescheduleTaskCommandSchema = z
+  .object({
+    type: z.literal("reschedule_task"),
+    payload: z
+      .object({
+        target: modelTaskLocatorSchema,
+        dueDate: modelIsoDateSchema.nullable(),
+        reason: z.string().max(300).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ModelRescheduleTaskCommand = z.infer<typeof modelRescheduleTaskCommandSchema>;
+
+export const modelReprioritizeTaskCommandSchema = z
+  .object({
+    type: z.literal("reprioritize_task"),
+    payload: z
+      .object({
+        target: modelTaskLocatorSchema,
+        priority: modelPrioritySchema,
+        reason: z.string().max(300).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ModelReprioritizeTaskCommand = z.infer<typeof modelReprioritizeTaskCommandSchema>;
+
+const withReason = {
+  reason: z.string().max(300).nullable(),
+} as const;
+
+export const modelPauseTaskCommandSchema = z
+  .object({
+    type: z.literal("pause_task"),
+    payload: z.object({ target: modelTaskLocatorSchema, ...withReason }).strict(),
+  })
+  .strict();
+
+export type ModelPauseTaskCommand = z.infer<typeof modelPauseTaskCommandSchema>;
+
+export const modelResumeTaskCommandSchema = z
+  .object({
+    type: z.literal("resume_task"),
+    payload: z.object({ target: modelTaskLocatorSchema, ...withReason }).strict(),
+  })
+  .strict();
+
+export type ModelResumeTaskCommand = z.infer<typeof modelResumeTaskCommandSchema>;
+
+export const modelDeleteTaskCommandSchema = z
+  .object({
+    type: z.literal("delete_task"),
+    payload: z.object({ target: modelTaskLocatorSchema, ...withReason }).strict(),
+  })
+  .strict();
+
+export type ModelDeleteTaskCommand = z.infer<typeof modelDeleteTaskCommandSchema>;
+
+export const modelRestoreTaskCommandSchema = z
+  .object({
+    type: z.literal("restore_task"),
+    payload: z.object({ target: modelTaskLocatorSchema }).strict(),
+  })
+  .strict();
+
+export type ModelRestoreTaskCommand = z.infer<typeof modelRestoreTaskCommandSchema>;
+
+const modelSplitPartSchema = z
+  .object({
+    title: z.string(),
+    estimateHours: z.number().positive().nullable(),
+    remainingHours: z.number().nonnegative().nullable(),
+    dueDate: modelIsoDateSchema.nullable(),
+    priority: modelPrioritySchema.nullable(),
+    note: z.string().max(500).nullable(),
+  })
+  .strict()
+  .refine(
+    ({ estimateHours, remainingHours }) => estimateHours !== null || remainingHours !== null,
+    { message: "estimateHours or remainingHours is required" },
+  );
+
+export const modelSplitTaskCommandSchema = z
+  .object({
+    type: z.literal("split_task"),
+    payload: z
+      .object({
+        target: modelTaskLocatorSchema,
+        parts: z.array(modelSplitPartSchema).min(2),
+        reason: z.string().max(300).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ModelSplitTaskCommand = z.infer<typeof modelSplitTaskCommandSchema>;
+
+export const modelMergeTasksCommandSchema = z
+  .object({
+    type: z.literal("merge_tasks"),
+    payload: z
+      .object({
+        targets: z.array(modelTaskLocatorSchema).min(2),
+        title: z.string(),
+        estimateHours: z.number().positive().nullable(),
+        remainingHours: z.number().nonnegative().nullable(),
+        dueDate: modelIsoDateSchema.nullable(),
+        priority: modelPrioritySchema.nullable(),
+        note: z.string().max(500).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ModelMergeTasksCommand = z.infer<typeof modelMergeTasksCommandSchema>;
+
+export const modelMarkTaskDoneCommandSchema = z
+  .object({
+    type: z.literal("mark_task_done"),
+    payload: z
+      .object({
+        target: modelTaskLocatorSchema,
+        note: z.string().max(500).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ModelMarkTaskDoneCommand = z.infer<typeof modelMarkTaskDoneCommandSchema>;
+
+export const modelReopenTaskCommandSchema = z
+  .object({
+    type: z.literal("reopen_task"),
+    payload: z
+      .object({
+        target: modelTaskLocatorSchema,
+        remainingHours: z.number().positive(),
+        note: z.string().max(500).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type ModelReopenTaskCommand = z.infer<typeof modelReopenTaskCommandSchema>;
+
 export const modelCommandSchema = z.discriminatedUnion("type", [
   modelCreateTasksCommandSchema,
   modelLogCompletionCommandSchema,
   modelShrinkTaskCommandSchema,
   modelAddBlackoutCommandSchema,
+  modelUpdateBlackoutWindowCommandSchema,
+  modelDeleteBlackoutWindowCommandSchema,
   modelAddUrgentTaskCommandSchema,
+  modelUpdateTaskFieldsCommandSchema,
+  modelRescheduleTaskCommandSchema,
+  modelReprioritizeTaskCommandSchema,
+  modelPauseTaskCommandSchema,
+  modelResumeTaskCommandSchema,
+  modelDeleteTaskCommandSchema,
+  modelRestoreTaskCommandSchema,
+  modelSplitTaskCommandSchema,
+  modelMergeTasksCommandSchema,
+  modelMarkTaskDoneCommandSchema,
+  modelReopenTaskCommandSchema,
 ]);
 
 export type ModelAiCommand = z.infer<typeof modelCommandSchema>;

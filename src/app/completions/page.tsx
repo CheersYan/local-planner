@@ -22,9 +22,14 @@ type CompletionListItem = {
   remainingHours: number;
 };
 
-const computeRemainingHours = (estimateMinutes: number, actualMinutes: number | null): number => {
-  const remainingMinutes = Math.max(estimateMinutes - (actualMinutes ?? 0), 0);
-  return Math.round((remainingMinutes / 60) * 10) / 10;
+const computeRemainingHours = (
+  estimateMinutes: number,
+  actualMinutes: number | null,
+  remainingMinutes: number | null,
+): number => {
+  const derived = remainingMinutes ?? estimateMinutes - (actualMinutes ?? 0);
+  const clamped = Math.max(derived, 0);
+  return Math.round((clamped / 60) * 10) / 10;
 };
 
 const formatHours = (hours: number): string => (Number.isInteger(hours) ? hours.toString() : hours.toFixed(1));
@@ -58,6 +63,7 @@ const databaseLabel = (() => {
 
 const loadTasks = async (): Promise<Task[]> =>
   prisma.task.findMany({
+    where: { deletedAt: null },
     orderBy: [
       { status: "asc" },
       { priority: "desc" },
@@ -80,7 +86,7 @@ export default async function CompletionLogPage() {
     id: task.id,
     title: task.title,
     status: task.status as CompletionFormTask["status"],
-    remainingHours: computeRemainingHours(task.estimateMinutes, task.actualMinutes),
+    remainingHours: computeRemainingHours(task.estimateMinutes, task.actualMinutes, task.remainingMinutes ?? null),
   }));
 
   const logItems: CompletionListItem[] = completionLogs.map((log) => ({
@@ -89,7 +95,11 @@ export default async function CompletionLogPage() {
     hoursDone: Math.round(((log.minutesSpent ?? 0) / 60) * 10) / 10,
     loggedDateText: formatDate(log.loggedAt),
     note: log.note ?? undefined,
-    remainingHours: computeRemainingHours(log.task.estimateMinutes, log.task.actualMinutes),
+    remainingHours: computeRemainingHours(
+      log.task.estimateMinutes,
+      log.task.actualMinutes,
+      log.task.remainingMinutes ?? null,
+    ),
   }));
 
   const todayInput = toInputDate(new Date());

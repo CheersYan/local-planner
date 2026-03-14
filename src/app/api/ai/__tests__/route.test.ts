@@ -240,7 +240,7 @@ describe("POST /api/ai", () => {
         {
           id: "t1",
           title: "Existing task",
-          status: "planned",
+          status: "active",
           estimateMinutes: 30,
           actualMinutes: 5,
           remainingMinutes: 25,

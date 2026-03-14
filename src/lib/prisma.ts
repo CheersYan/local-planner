@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 
-export type TaskStatus = 'planned' | 'in_progress' | 'done' | 'dropped';
+export type TaskStatus = 'active' | 'paused' | 'completed' | 'archived';
 export type CommandStatus = 'pending' | 'applied' | 'rejected';
 export type CommandType =
   | 'set_goal'

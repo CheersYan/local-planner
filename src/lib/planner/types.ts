@@ -5,13 +5,14 @@ export type ISODateTimeString = string; // e.g. "2026-03-11T09:00:00+10:00"
  * Keep planner types independent from Prisma so the planner stays a pure domain module.
  * If your app uses Prisma enums, they are usually assignable to these string unions.
  */
-export type TaskStatus = "todo" | "planned" | "in_progress" | "done" | "dropped";
+export type TaskStatus = "active" | "paused" | "completed" | "archived";
 
 export type PlannerTask = {
   id: string;
   title: string;
   status: TaskStatus;
   estimateMinutes: number;
+  remainingMinutes?: number;
   actualMinutes?: number;
   dueDate?: ISODateString;
   plannedDate?: ISODateString;
