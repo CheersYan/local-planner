@@ -1,12 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
 import { prisma } from "@/lib/prisma";
 import * as plannerService from "@/lib/planner/service";
 import { executeCommandBatch } from "../executor";
 import type { AiCommandBatch } from "@/lib/ai/command-schema";
-import type { PlannerServiceResult } from "@/lib/planner/service";
+import type { PlannerServiceOptions, PlannerServiceResult } from "@/lib/planner/service";
 
-const mockReplan = vi.spyOn(plannerService, "generatePlanSlots");
+let mockReplan: MockInstance<[options?: PlannerServiceOptions], Promise<PlannerServiceResult>>;
 
 const emptyPlannerResult: PlannerServiceResult = {
   today: "2026-03-14",
@@ -39,7 +39,17 @@ const createTask = (overrides: Partial<Parameters<typeof prisma.task.create>[0][
       plannedDate: overrides.plannedDate ?? null,
       locked: overrides.locked ?? false,
       note: overrides.note ?? null,
+      deletedAt: overrides.deletedAt ?? null,
       parentTaskId: overrides.parentTaskId ?? null,
+    },
+  });
+
+const createBlackout = (overrides: Partial<Parameters<typeof prisma.blackoutWindow.create>[0]["data"]> = {}) =>
+  prisma.blackoutWindow.create({
+    data: {
+      start: overrides.start ?? new Date("2026-03-18T00:00:00Z"),
+      end: overrides.end ?? new Date("2026-03-18T23:59:59Z"),
+      reason: overrides.reason ?? "Travel",
     },
   });
 
@@ -47,8 +57,13 @@ beforeEach(async () => {
   await prisma.planSlot.deleteMany();
   await prisma.completionLog.deleteMany();
   await prisma.task.deleteMany();
-  mockReplan.mockReset();
+  await prisma.blackoutWindow.deleteMany();
+  mockReplan = vi.spyOn(plannerService, "generatePlanSlots");
   mockReplan.mockResolvedValue(emptyPlannerResult);
+});
+
+afterEach(() => {
+  mockReplan.mockRestore();
 });
 
 describe("executeCommandBatch", () => {
@@ -70,6 +85,7 @@ describe("executeCommandBatch", () => {
     ];
 
     const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+    expect(result.results[0].requiresReplan).toBe(true);
     expect(result.replanTriggered).toBe(true);
     expect(mockReplan).toHaveBeenCalled();
     const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
@@ -212,5 +228,150 @@ describe("executeCommandBatch", () => {
     const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
     expect(result.results[0].status).toBe("error");
     expect(result.results[0].message).toMatch(/ambiguous/i);
+  });
+
+  it("prefers active tasks over archived ones with the same title", async () => {
+    const active = await createTask({ title: "重复标题", status: "active" });
+    const archived = await createTask({
+      title: "重复标题",
+      status: "archived",
+      deletedAt: new Date("2026-03-10T00:00:00Z"),
+    });
+
+    const batch: AiCommandBatch = [
+      {
+        type: "update_task_fields",
+        payload: {
+          target: { title: "重复标题" },
+          note: "keep me",
+        },
+      },
+    ];
+
+    await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+
+    const updatedActive = await prisma.task.findUniqueOrThrow({ where: { id: active.id } });
+    const untouchedArchived = await prisma.task.findUniqueOrThrow({ where: { id: archived.id } });
+
+    expect(updatedActive.note).toBe("keep me");
+    expect(untouchedArchived.note).toBeNull();
+  });
+
+  it("updates blackout reason without triggering replan", async () => {
+    const blackout = await createBlackout({
+      start: new Date("2026-03-19T00:00:00Z"),
+      end: new Date("2026-03-19T23:59:59Z"),
+      reason: "Trip",
+    });
+
+    const batch: AiCommandBatch = [
+      {
+        type: "update_blackout_window",
+        payload: { target: { blackoutId: blackout.id }, reason: "WFH" },
+      },
+    ];
+
+    const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+    const updated = await prisma.blackoutWindow.findUniqueOrThrow({ where: { id: blackout.id } });
+
+    expect(result.results[0].requiresReplan).toBe(false);
+    expect(result.replanTriggered).toBe(false);
+    expect(mockReplan).not.toHaveBeenCalled();
+    expect(updated.reason).toBe("WFH");
+    expect(updated.start.toISOString().slice(0, 10)).toBe("2026-03-19");
+  });
+
+  it("updates blackout dates and triggers replan", async () => {
+    const blackout = await createBlackout({
+      start: new Date("2026-03-18T00:00:00Z"),
+      end: new Date("2026-03-19T23:59:59Z"),
+      reason: "Offsite",
+    });
+
+    const batch: AiCommandBatch = [
+      {
+        type: "update_blackout_window",
+        payload: {
+          target: { blackoutId: blackout.id },
+          startDate: "2026-03-20",
+          endDate: "2026-03-21",
+        },
+      },
+    ];
+
+    const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+    const updated = await prisma.blackoutWindow.findUniqueOrThrow({ where: { id: blackout.id } });
+
+    expect(result.results[0].requiresReplan).toBe(true);
+    expect(result.replanTriggered).toBe(true);
+    expect(mockReplan).toHaveBeenCalled();
+    expect(updated.start.toISOString().slice(0, 10)).toBe("2026-03-20");
+    expect(updated.end.toISOString().slice(0, 10)).toBe("2026-03-21");
+  });
+
+  it("deletes a blackout window and triggers replan", async () => {
+    const blackout = await createBlackout({
+      start: new Date("2026-03-22T00:00:00Z"),
+      end: new Date("2026-03-22T23:59:59Z"),
+      reason: "Holiday",
+    });
+
+    const batch: AiCommandBatch = [
+      {
+        type: "delete_blackout_window",
+        payload: { target: { blackoutId: blackout.id } },
+      },
+    ];
+
+    const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+    const deleted = await prisma.blackoutWindow.findUnique({ where: { id: blackout.id } });
+
+    expect(result.results[0].requiresReplan).toBe(true);
+    expect(result.replanTriggered).toBe(true);
+    expect(mockReplan).toHaveBeenCalled();
+    expect(deleted).toBeNull();
+  });
+
+  it("returns candidates when blackout match is ambiguous", async () => {
+    await createBlackout({
+      start: new Date("2026-03-24T00:00:00Z"),
+      end: new Date("2026-03-24T23:59:59Z"),
+      reason: "Trip to NYC",
+    });
+    await createBlackout({
+      start: new Date("2026-03-25T00:00:00Z"),
+      end: new Date("2026-03-25T23:59:59Z"),
+      reason: "Trip to SF",
+    });
+
+    const batch: AiCommandBatch = [
+      {
+        type: "update_blackout_window",
+        payload: { target: { fuzzyReason: "Trip" }, reason: "Updated" },
+      },
+    ];
+
+    const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+    const count = await prisma.blackoutWindow.count();
+
+    expect(result.results[0].status).toBe("error");
+    expect(result.results[0].blackoutCandidates?.length).toBe(2);
+    expect(result.replanTriggered).toBe(false);
+    expect(mockReplan).not.toHaveBeenCalled();
+    expect(count).toBe(2);
+  });
+
+  it("fails when blackout is not found", async () => {
+    const batch: AiCommandBatch = [
+      {
+        type: "delete_blackout_window",
+        payload: { target: { blackoutId: "missing-id" } },
+      },
+    ];
+
+    const result = await executeCommandBatch(batch, { now: new Date("2026-03-14T00:00:00Z") });
+    expect(result.results[0].status).toBe("error");
+    expect(result.replanTriggered).toBe(false);
+    expect(mockReplan).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,21 @@ import type { InputMessage } from "@/lib/ai/openai-responses";
 const mockFetchModelCommands = vi.fn();
 const mockNormalizeModelEnvelope = vi.fn();
 
+const makeTrace = (chatId = "chat-mock") => ({
+  clientRequestId: "client-req",
+  openaiResponseId: "resp-id",
+  xRequestId: "x-req-id",
+  model: "gpt-4.1-mini",
+  usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+  metadata: {
+    app: "local-planner",
+    workflow: "parse_commands",
+    route: "api_ai_parse",
+    env: "test",
+    chat_id: chatId,
+  },
+});
+
 const originalEnv = {
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL,
@@ -158,7 +173,7 @@ describe("POST /api/ai", () => {
         },
       },
     ];
-    mockFetchModelCommands.mockResolvedValue({ envelope, raw: { id: "raw" } });
+    mockFetchModelCommands.mockResolvedValue({ envelope, raw: { id: "raw" }, trace: makeTrace() });
     mockNormalizeModelEnvelope.mockReturnValue(commands);
     const { POST } = await loadRoute();
 
@@ -173,6 +188,47 @@ describe("POST /api/ai", () => {
     expect(data.history).toHaveLength(2);
     expect(data.history[0]).toMatchObject({ role: "user", content: "Plan my day" });
     expect(data.history[1]).toMatchObject({ role: "assistant" });
+    expect(data.trace).toEqual({
+      clientRequestId: "client-req",
+      openaiResponseId: "resp-id",
+      xRequestId: "x-req-id",
+      model: "gpt-4.1-mini",
+      usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+    });
+    expect(JSON.stringify(data)).not.toContain("test-key");
+  });
+
+  it("returns trace identifiers from fetchModelCommands", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    const trace = makeTrace();
+    mockFetchModelCommands.mockResolvedValue({ envelope: { commands: [] }, raw: {}, trace });
+    mockNormalizeModelEnvelope.mockReturnValue([]);
+    const { POST } = await loadRoute();
+
+    const response = await POST(makeRequest({ message: "trace please" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.trace).toMatchObject({
+      clientRequestId: trace.clientRequestId,
+      openaiResponseId: trace.openaiResponseId,
+    });
+  });
+
+  it("guides the model to use title/fuzzyTitle when taskId is missing", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    mockFetchModelCommands.mockResolvedValue({ envelope: { commands: [] }, raw: {}, trace: makeTrace() });
+    mockNormalizeModelEnvelope.mockReturnValue([]);
+    const { POST } = await loadRoute();
+
+    await POST(makeRequest({ message: "更新一下产品 demo 任务" }));
+
+    const messages = mockFetchModelCommands.mock.calls[0][0].messages as InputMessage[];
+    const systemMessage = messages.find((msg) => msg.role === "system" && msg.content.includes("You convert user intent"));
+
+    expect(systemMessage?.content).toContain("prefer title or fuzzyTitle");
+    expect(systemMessage?.content).toContain("Do not return {\"commands\": []} just because taskId is missing");
+    expect(systemMessage?.content).not.toContain("Prefer taskId");
   });
 
   it("returns 502 and appends failure message when fetchModelCommands throws", async () => {
@@ -197,14 +253,14 @@ describe("POST /api/ai", () => {
   it("reuses history when chatId is provided", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     const chatId = "22222222-2222-4222-8222-222222222222";
-    mockFetchModelCommands.mockResolvedValue({ envelope: { commands: [] }, raw: {} });
+    mockFetchModelCommands.mockResolvedValue({ envelope: { commands: [] }, raw: {}, trace: makeTrace(chatId) });
     mockNormalizeModelEnvelope.mockReturnValue([]);
     const { POST } = await loadRoute();
 
     const firstResponse = await POST(makeRequest({ message: "first", chatId }));
     const firstBody = await firstResponse.json();
 
-    mockFetchModelCommands.mockResolvedValue({ envelope: { commands: [] }, raw: {} });
+    mockFetchModelCommands.mockResolvedValue({ envelope: { commands: [] }, raw: {}, trace: makeTrace(chatId) });
     const secondResponse = await POST(makeRequest({ message: "second", chatId }));
     const secondBody = await secondResponse.json();
 
@@ -220,7 +276,7 @@ describe("POST /api/ai", () => {
   it("handles context input and still calls downstream parsing", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     const envelope = { commands: [] };
-    mockFetchModelCommands.mockResolvedValue({ envelope, raw: {} });
+    mockFetchModelCommands.mockResolvedValue({ envelope, raw: {}, trace: makeTrace() });
     mockNormalizeModelEnvelope.mockReturnValue([]);
     const { POST } = await loadRoute();
 

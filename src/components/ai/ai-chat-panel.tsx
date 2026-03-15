@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { useRouter } from "next/navigation";
 
 import type { AiCommandBatch } from "@/lib/ai/command-schema";
 import { sendAiMessage, type AiRouteError } from "@/lib/ai/ai-client";
@@ -100,6 +101,7 @@ export function AiChatPanel({
   initialHasResult,
   initialError = null,
 }: AiChatPanelProps) {
+  const router = useRouter();
   const resolvedHasResult = initialHasResult ?? (initialCommands.length > 0 || Boolean(initialError));
 
   const [input, setInput] = useState("");
@@ -112,6 +114,7 @@ export function AiChatPanel({
   const [previewResults, setPreviewResults] = useState<CommandResult[] | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [statusTone, setStatusTone] = useState<"success" | "error" | null>(null);
 
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -128,6 +131,7 @@ export function AiChatPanel({
   const runPreview = async (batch: AiCommandBatch) => {
     if (batch.length === 0) {
       setPreviewResults(null);
+       setStatusTone(null);
       return;
     }
 
@@ -143,9 +147,11 @@ export function AiChatPanel({
       }
       setPreviewResults(data.results ?? null);
       setStatusMessage(null);
+      setStatusTone(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "预览失败";
       setStatusMessage(message);
+      setStatusTone("error");
     }
   };
 
@@ -209,6 +215,7 @@ export function AiChatPanel({
     if (commands.length === 0 || isExecuting) return;
     setIsExecuting(true);
     setStatusMessage(null);
+    setStatusTone(null);
 
     try {
       const response = await fetch("/api/commands", {
@@ -222,10 +229,14 @@ export function AiChatPanel({
       }
 
       setPreviewResults(data.results ?? null);
-      setStatusMessage(data.replanTriggered ? "执行成功，已触发重排" : "执行成功");
+      const successMessage = data.replanTriggered ? "执行成功，已触发重排" : "执行成功";
+      setStatusMessage(successMessage);
+      setStatusTone("success");
+      router.refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : "执行失败，请稍后重试。";
       setStatusMessage(message);
+      setStatusTone("error");
     } finally {
       setIsExecuting(false);
     }
@@ -354,7 +365,17 @@ export function AiChatPanel({
           {isExecuting ? "执行中…" : "执行这些命令"}
         </button>
         {statusMessage ? (
-          <span className="text-xs text-muted-foreground">{statusMessage}</span>
+          <span
+            className={`text-xs ${
+              statusTone === "success"
+                ? "text-success"
+                : statusTone === "error"
+                  ? "text-danger"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {statusMessage}
+          </span>
         ) : null}
       </div>
 
@@ -364,6 +385,7 @@ export function AiChatPanel({
         isLoading={isSending}
         hasResult={hasResult}
         statusMessage={statusMessage}
+        statusTone={statusTone}
       />
     </div>
   );

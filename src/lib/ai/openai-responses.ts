@@ -3,6 +3,25 @@ import { makeParseableTextFormat } from "openai/lib/parser";
 
 import { modelCommandEnvelopeSchema, ModelAiCommandEnvelope } from "./model-command-schema";
 
+type OpenAILogLevel = "off" | "error" | "warn" | "info" | "debug";
+
+type OpenAIRequestMetadata = {
+  app: string;
+  workflow: string;
+  route: string;
+  env: string;
+  chat_id: string;
+};
+
+export type OpenAITrace = {
+  clientRequestId: string;
+  openaiResponseId: string;
+  xRequestId: string | null;
+  model: string;
+  usage: { total_tokens?: number; input_tokens?: number; output_tokens?: number } | undefined;
+  metadata: OpenAIRequestMetadata;
+};
+
 const isoDateString = {
   type: "string",
   format: "date",
@@ -87,6 +106,7 @@ export type InputMessage = {
 export type ParsedModelCommands = {
   envelope: ModelAiCommandEnvelope;
   raw: unknown;
+  trace: OpenAITrace;
 };
 
 export const plannerCommandsJsonSchema = {
@@ -313,25 +333,106 @@ const plannerCommandsTextFormat = makeParseableTextFormat<ModelAiCommandEnvelope
   (content) => parsePlannerEnvelope(JSON.parse(content))
 );
 
+const parseLogLevel = (value: string | undefined): OpenAILogLevel | undefined => {
+  if (!value) return undefined;
+  const normalized = value.toLowerCase();
+  const allowed: OpenAILogLevel[] = ["off", "error", "warn", "info", "debug"];
+  return allowed.includes(normalized as OpenAILogLevel)
+    ? (normalized as OpenAILogLevel)
+    : undefined;
+};
+
+const clampMetadataValue = (value: string): string => value.slice(0, 200);
+
+const buildRequestMetadata = (chatId: string): OpenAIRequestMetadata => ({
+  app: "local-planner",
+  workflow: "parse_commands",
+  route: "api_ai_parse",
+  env: clampMetadataValue(process.env.NODE_ENV ?? "development"),
+  chat_id: clampMetadataValue(chatId),
+});
+
 export const fetchModelCommands = async (params: {
   apiKey: string;
   model: string;
   messages: InputMessage[];
+  chatId: string;
   abortSignal?: AbortSignal;
+  clientRequestId?: string;
 }): Promise<ParsedModelCommands> => {
-  const { apiKey, model, messages, abortSignal } = params;
-  const client = new OpenAI({ apiKey });
+  const { apiKey, model, messages, chatId, abortSignal, clientRequestId } = params;
 
-  const response = await client.responses.parse({
-    model,
-    input: messages,
-    store: false,
-    signal: abortSignal,
-    text: {
-      format: plannerCommandsTextFormat,
-    },
+  const logLevel = parseLogLevel(process.env.OPENAI_LOG);
+  const debugResponses = process.env.OPENAI_RESPONSE_DEBUG === "true";
+  const resolvedClientRequestId = clientRequestId ?? crypto.randomUUID();
+  const metadata = buildRequestMetadata(chatId);
+
+  const defaultHeaders: Record<string, string> = {
+    "X-Client-Request-Id": resolvedClientRequestId,
+  };
+
+  if (process.env.OPENAI_PROJECT) {
+    defaultHeaders["OpenAI-Project"] = process.env.OPENAI_PROJECT;
+  }
+
+  const openAiOrganization =
+    process.env.OPENAI_ORGANIZATION ?? process.env.OPENAI_ORG ?? process.env.OPENAI_ORG_ID;
+
+  if (openAiOrganization) {
+    defaultHeaders["OpenAI-Organization"] = openAiOrganization;
+  }
+
+  const client = new OpenAI({
+    apiKey,
+    logLevel,
+    defaultHeaders,
   });
 
-  const envelope = parsePlannerEnvelope(response.output_parsed);
-  return { envelope, raw: response };
+  const requestHeaders = { ...defaultHeaders };
+
+  const requestPromise = client.responses.parse(
+    {
+      model,
+      input: messages,
+      store: true,
+      metadata,
+      text: {
+        format: plannerCommandsTextFormat,
+      },
+    },
+    {
+      signal: abortSignal,
+      headers: requestHeaders,
+    }
+  );
+
+  const { data, response, request_id } = await requestPromise.withResponse();
+
+  const envelope = parsePlannerEnvelope(data.output_parsed);
+  const xRequestId =
+    response.headers.get("x-request-id") ??
+    response.headers.get("X-Request-Id") ??
+    request_id ??
+    null;
+
+  const trace: OpenAITrace = {
+    clientRequestId: resolvedClientRequestId,
+    openaiResponseId: data.id,
+    xRequestId,
+    model: data.model,
+    usage: data.usage,
+    metadata,
+  };
+
+  console.info("openai.response", trace);
+
+  if (debugResponses) {
+    console.debug("openai.response.debug", {
+      trace,
+      status: response.status,
+      processingMs: response.headers.get("openai-processing-ms"),
+    });
+  }
+
+  return { envelope, raw: data, trace };
 };

@@ -11,8 +11,15 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    environmentMatchGlobs: [["src/components/ai/**/?(*.)dom.test.tsx", "jsdom"]],
+    poolOptions: {
+      threads: {
+        singleThread: true,
+      },
+    },
     env: {
       DATABASE_URL: databaseUrl,
+      RUN_OPENAI_ROUTE_TEST: "0",
     },
   },
 });

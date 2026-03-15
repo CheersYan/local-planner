@@ -11,6 +11,7 @@ type CommandPreviewListProps = {
   isLoading?: boolean;
   hasResult?: boolean;
   statusMessage?: string | null;
+  statusTone?: "success" | "error" | null;
 };
 
 export function CommandPreviewList({
@@ -19,12 +20,20 @@ export function CommandPreviewList({
   isLoading = false,
   hasResult = false,
   statusMessage,
+  statusTone = null,
 }: CommandPreviewListProps) {
   const headerText = hasResult
     ? commands.length === 0
       ? "未识别到可执行操作"
       : `识别到 ${commands.length} 个操作`
     : "等待输入";
+
+  const statusToneClass =
+    statusTone === "success"
+      ? "border-success/50 bg-success/10 text-success"
+      : statusTone === "error"
+        ? "border-danger/50 bg-danger/10 text-danger"
+        : "border-border/60 bg-muted/40 text-foreground";
 
   return (
     <div className="rounded-2xl border border-border/70 bg-surface/80 p-4 shadow-sm">
@@ -49,7 +58,7 @@ export function CommandPreviewList({
       </div>
 
       {statusMessage ? (
-        <div className="mt-3 rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-sm text-foreground">
+        <div className={`mt-3 rounded-xl px-3 py-2 text-sm ${statusToneClass}`}>
           {statusMessage}
         </div>
       ) : null}

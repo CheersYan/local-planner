@@ -9,7 +9,11 @@ import {
   type AiReadableContext,
   type AiReadableTask,
 } from "@/lib/ai/command-schema";
-import { fetchModelCommands, InputMessage } from "@/lib/ai/openai-responses";
+import {
+  fetchModelCommands,
+  InputMessage,
+  type OpenAITrace,
+} from "@/lib/ai/openai-responses";
 import { normalizeModelEnvelope } from "@/lib/ai/model-normalizer";
 
 const requestSchema = z.object({
@@ -20,7 +24,11 @@ const requestSchema = z.object({
 
 export const systemPrompt = `You convert user intent into planner commands only (preview, no execution).
 - Allowed commands: create_tasks, log_completion, shrink_task, add_blackout, update_blackout_window, delete_blackout_window, add_urgent_task, update_task_fields, reschedule_task, reprioritize_task, pause_task, resume_task, delete_task, restore_task, split_task, merge_tasks, mark_task_done, reopen_task.
-- For task edits, always include target {taskId | title | fuzzyTitle}. Prefer taskId; if the task is missing or ambiguous, return {"commands": []}.
+- For task edits, always include target {taskId | title | fuzzyTitle}.
+  - If the user explicitly provides taskId, include taskId.
+  - Otherwise prefer title or fuzzyTitle and keep the user's phrasing.
+  - Do not return {"commands": []} just because taskId is missing.
+  - Do not guess the final database match; leave ambiguity to the backend matcher.
 - For blackout edits, include target {blackoutId | startDate + endDate | fuzzyReason}. startDate/endDate use YYYY-MM-DD only. Do not guess blackoutId.
 - Use hours (not minutes) for estimateHours / remainingHours fields in update_task_fields, split_task.parts, merge_tasks, and reopen_task. Round to one decimal if needed.
 - Priorities: low | medium | high | urgent. Dates: YYYY-MM-DD only (no time). Notes <= 500 chars, reasons <= 300 chars.
@@ -90,7 +98,8 @@ const formatBlackouts = (blackouts?: AiReadableBlackout[]): string | null => {
 const formatTaskLine = (task: AiReadableTask): string => {
   const remainingMinutes = computeRemainingMinutes(task);
   const segments = [
-    `• ${task.title} (#${task.id})`,
+    `• title: ${task.title}`,
+    `id:${task.id}`,
     `status:${task.status}`,
     `est:${task.estimateMinutes}min`,
     `remaining:${remainingMinutes}min`,
@@ -110,7 +119,7 @@ const formatTaskLine = (task: AiReadableTask): string => {
     segments.push("locked");
   }
 
-  return segments.join(" ");
+  return segments.join(" | ");
 };
 
 const renderContext = (context?: AiReadableContext): string | null => {
@@ -157,6 +166,14 @@ const toInputMessages = (history: ChatMessage[], context?: AiReadableContext): I
 
 const nowIso = (): string => new Date().toISOString();
 
+const toTracePayload = (trace: OpenAITrace) => ({
+  clientRequestId: trace.clientRequestId,
+  openaiResponseId: trace.openaiResponseId,
+  xRequestId: trace.xRequestId,
+  model: trace.model,
+  usage: trace.usage,
+});
+
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
@@ -188,10 +205,11 @@ export async function POST(request: NextRequest) {
   const inputMessages = toInputMessages(history, context);
 
   try {
-    const { envelope } = await fetchModelCommands({
+    const { envelope, trace } = await fetchModelCommands({
       apiKey,
       model,
       messages: inputMessages,
+      chatId,
     });
 
     const commands: AiCommandBatch = normalizeModelEnvelope(envelope);
@@ -208,6 +226,7 @@ export async function POST(request: NextRequest) {
       chatId,
       commands,
       raw: envelope,
+      trace: toTracePayload(trace),
       history: readHistory(chatId),
     });
   } catch (error) {

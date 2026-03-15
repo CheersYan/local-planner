@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 
 import {
   fetchModelCommands,
@@ -10,6 +11,9 @@ import { modelCommandEnvelopeSchema } from "../model-command-schema";
 
 const constructorSpy = vi.fn();
 const parseMock = vi.fn();
+const withResponseMock = vi.fn();
+let infoSpy: MockInstance<Parameters<typeof console.info>, ReturnType<typeof console.info>>;
+let debugSpy: MockInstance<Parameters<typeof console.debug>, ReturnType<typeof console.debug>>;
 
 vi.mock("openai", () => {
   class MockOpenAI {
@@ -164,29 +168,175 @@ describe("fetchModelCommands", () => {
     { role: "user", content: "Plan my day" },
   ];
 
+const originalEnv = {
+  OPENAI_RESPONSE_STORE: process.env.OPENAI_RESPONSE_STORE,
+  OPENAI_LOG: process.env.OPENAI_LOG,
+  OPENAI_RESPONSE_DEBUG: process.env.OPENAI_RESPONSE_DEBUG,
+  OPENAI_PROJECT: process.env.OPENAI_PROJECT,
+  OPENAI_ORGANIZATION: process.env.OPENAI_ORGANIZATION,
+  OPENAI_ORG: process.env.OPENAI_ORG,
+  OPENAI_ORG_ID: process.env.OPENAI_ORG_ID,
+} as const;
+
+const restoreEnvVar = (key: keyof typeof originalEnv, value: string | undefined) => {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+};
+
+  const makeHeaders = () => new Headers({ "x-request-id": "req-123" });
+
+  const mockParsedResponse = (overrides: Record<string, unknown> = {}) => {
+    withResponseMock.mockResolvedValue({
+      data: {
+        id: "resp_123",
+        model: "gpt-4.1-mini",
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+        output_parsed: { commands: [] },
+        ...overrides,
+      },
+      response: new Response("{}", { status: 200, headers: makeHeaders() }),
+      request_id: "req-123",
+    });
+
+    parseMock.mockReturnValue({ withResponse: withResponseMock });
+  };
+
   beforeEach(() => {
     constructorSpy.mockReset();
     parseMock.mockReset();
+    withResponseMock.mockReset();
+    vi.restoreAllMocks();
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("client-uuid");
+    infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    (Object.keys(originalEnv) as Array<keyof typeof originalEnv>).forEach((key) => {
+      restoreEnvVar(key, originalEnv[key]);
+    });
   });
 
-  it("passes apiKey and model into OpenAI client", async () => {
-    parseMock.mockResolvedValue({ output_parsed: { commands: [] } });
+  it("sets store, metadata, and client request id headers", async () => {
+    mockParsedResponse();
 
     await fetchModelCommands({
       apiKey: "key",
       model: "model",
       messages,
+      chatId: "chat-123",
     });
 
-    expect(constructorSpy).toHaveBeenCalledWith({ apiKey: "key" });
-    expect(parseMock).toHaveBeenCalled();
+    expect(constructorSpy).toHaveBeenCalledWith({
+      apiKey: "key",
+      logLevel: undefined,
+      defaultHeaders: { "X-Client-Request-Id": "client-uuid" },
+    });
+
+    expect(parseMock).toHaveBeenCalledTimes(1);
+    const [body, options] = parseMock.mock.calls[0] as [
+      { store?: boolean; metadata?: Record<string, string> },
+      { headers?: Record<string, string> }
+    ];
+
+    expect(body.store).toBe(true);
+    expect(body.metadata).toMatchObject({
+      app: "local-planner",
+      workflow: "parse_commands",
+      route: "api_ai_parse",
+      env: expect.any(String),
+      chat_id: "chat-123",
+    });
+    expect(options?.headers).toMatchObject({
+      "X-Client-Request-Id": "client-uuid",
+    });
+    expect(withResponseMock).toHaveBeenCalled();
+  });
+
+  it("forces store=true and forwards project/org headers when configured", async () => {
+    process.env.OPENAI_RESPONSE_STORE = "false";
+    process.env.OPENAI_PROJECT = "proj_123";
+    process.env.OPENAI_ORGANIZATION = "org_456";
+    mockParsedResponse();
+
+    await fetchModelCommands({
+      apiKey: "key",
+      model: "model",
+      messages,
+      chatId: "chat-123",
+    });
+
+    expect(constructorSpy).toHaveBeenCalledWith({
+      apiKey: "key",
+      logLevel: undefined,
+      defaultHeaders: {
+        "X-Client-Request-Id": "client-uuid",
+        "OpenAI-Project": "proj_123",
+        "OpenAI-Organization": "org_456",
+      },
+    });
+
+    const [body, options] = parseMock.mock.calls[0] as [
+      { store?: boolean },
+      { headers?: Record<string, string> }
+    ];
+
+    expect(body.store).toBe(true);
+    expect(options?.headers).toMatchObject({
+      "X-Client-Request-Id": "client-uuid",
+      "OpenAI-Project": "proj_123",
+      "OpenAI-Organization": "org_456",
+    });
+  });
+
+  it("returns trace ids, logs them, and avoids leaking the API key", async () => {
+    mockParsedResponse();
+
+    const result = await fetchModelCommands({
+      apiKey: "super-secret-key",
+      model: "model",
+      messages,
+      chatId: "chat-456",
+    });
+
+    expect(result.trace).toMatchObject({
+      clientRequestId: "client-uuid",
+      openaiResponseId: "resp_123",
+      xRequestId: "req-123",
+      model: "gpt-4.1-mini",
+    });
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "openai.response",
+      expect.objectContaining({ openaiResponseId: "resp_123" })
+    );
+
+    const serializedLogs = JSON.stringify(infoSpy.mock.calls);
+    expect(serializedLogs).not.toContain("super-secret-key");
+  });
+
+  it("emits debug logs only when OPENAI_RESPONSE_DEBUG is true", async () => {
+    process.env.OPENAI_RESPONSE_DEBUG = "true";
+    mockParsedResponse();
+
+    await fetchModelCommands({
+      apiKey: "key",
+      model: "model",
+      messages,
+      chatId: "chat-789",
+    });
+
+    expect(debugSpy).toHaveBeenCalledWith(
+      "openai.response.debug",
+      expect.objectContaining({ status: 200 })
+    );
   });
 
   it("throws when output_parsed fails modelCommandEnvelopeSchema validation", async () => {
-    parseMock.mockResolvedValue({ output_parsed: { bad: true } });
+    mockParsedResponse({ output_parsed: { bad: true } });
 
     await expect(
-      fetchModelCommands({ apiKey: "key", model: "model", messages })
+      fetchModelCommands({ apiKey: "key", model: "model", messages, chatId: "chat-err" })
     ).rejects.toThrow();
   });
 });

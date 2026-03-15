@@ -5,6 +5,7 @@ import { prisma } from "../prisma";
 import type { AiCommand, AiCommandBatch, BlackoutLocator, TaskLocator } from "../ai/command-schema";
 import { aiCommandBatchSchema } from "../ai/command-schema";
 import { matchBlackout, BlackoutMatchError, toBlackoutPreview } from "./blackout-matcher";
+import { matchTask, TaskMatchError, toTaskPreview, type TaskMatchOptions } from "./task-matcher";
 import type { BlackoutPreview, CommandResult, ExecutionResult, TaskPreview } from "./types";
 
 export class CommandExecutionError extends Error {
@@ -13,15 +14,6 @@ export class CommandExecutionError extends Error {
   constructor(message: string, results: CommandResult[]) {
     super(message);
     this.results = results;
-  }
-}
-
-class MatchError extends Error {
-  candidates?: Task[];
-
-  constructor(message: string, candidates?: Task[]) {
-    super(message);
-    this.candidates = candidates;
   }
 }
 
@@ -43,19 +35,7 @@ const toDateOrNull = (iso: string | null | undefined): Date | null => {
 
 const snapshotBlackout = (window: BlackoutWindow): BlackoutPreview => toBlackoutPreview(window);
 
-const snapshot = (task: Task): TaskPreview => ({
-  id: task.id,
-  title: task.title,
-  status: task.status as TaskPreview["status"],
-  estimateMinutes: task.estimateMinutes,
-  remainingMinutes: task.remainingMinutes ?? null,
-  actualMinutes: task.actualMinutes ?? null,
-  dueDate: task.dueDate ? task.dueDate.toISOString() : null,
-  priority: task.priority,
-  note: task.note ?? null,
-  deletedAt: task.deletedAt ? task.deletedAt.toISOString() : null,
-  parentTaskId: task.parentTaskId ?? null,
-});
+const snapshot = toTaskPreview;
 
 const computeRemaining = (task: Task): number =>
   task.remainingMinutes ?? Math.max(task.estimateMinutes - (task.actualMinutes ?? 0), 0);
@@ -65,53 +45,8 @@ const deleteFutureSlots = (tx: Prisma.TransactionClient, taskId: string, today: 
     where: { taskId, slotDate: { gte: today } },
   });
 
-type MatchOptions = {
-  includeDeleted?: boolean;
-};
-
-const matchTask = async (
-  tx: Prisma.TransactionClient,
-  locator: TaskLocator,
-  options: MatchOptions = {},
-): Promise<Task> => {
-  const baseWhere: Prisma.TaskWhereInput = options.includeDeleted ? {} : { deletedAt: null };
-  let cachedTasks: Task[] | null = null;
-  const listTasks = async () => {
-    if (!cachedTasks) {
-      cachedTasks = await tx.task.findMany({ where: baseWhere });
-    }
-    return cachedTasks;
-  };
-
-  if (locator.taskId) {
-    const task = await tx.task.findFirst({
-      where: { id: locator.taskId, ...baseWhere },
-    });
-    if (task) return task;
-  }
-
-  if (locator.title) {
-    const tasks = await listTasks();
-    const normalized = locator.title.toLowerCase();
-    const candidates = tasks.filter((task) => task.title.toLowerCase() === normalized);
-    if (candidates.length === 1) return candidates[0];
-    if (candidates.length > 1) {
-      throw new MatchError("Task title is ambiguous", candidates);
-    }
-  }
-
-  if (locator.fuzzyTitle) {
-    const tasks = await listTasks();
-    const needle = locator.fuzzyTitle.toLowerCase();
-    const candidates = tasks.filter((task) => task.title.toLowerCase().includes(needle));
-    if (candidates.length === 1) return candidates[0];
-    if (candidates.length > 1) {
-      throw new MatchError("Task title is ambiguous", candidates);
-    }
-  }
-
-  throw new MatchError("Task not found");
-};
+const restoreStatusPreference = ["archived", "completed", "paused", "active"];
+const reopenStatusPreference = ["completed", "archived", "active", "paused"];
 
 const ensureActive = (task: Task, command: AiCommand) => {
   if (task.deletedAt) {
@@ -132,17 +67,27 @@ const applyCommand = async (
   today: Date,
   dryRun: boolean,
 ): Promise<{ result: CommandResult; requiresReplan: boolean }> => {
-  const resolve = async (locator: TaskLocator, includeDeleted = false) => {
+  let cachedTasks: Task[] | null = null;
+  const loadTasks = async (): Promise<Task[]> => {
+    if (!cachedTasks) {
+      cachedTasks = await tx.task.findMany();
+    }
+    return cachedTasks;
+  };
+
+  const resolve = async (locator: TaskLocator, options: TaskMatchOptions = {}) => {
+    const tasks = await loadTasks();
     try {
-      return await matchTask(tx, locator, { includeDeleted });
+      return matchTask(tasks, locator, { suggestionsLimit: 3, ...options });
     } catch (error) {
-      if (error instanceof MatchError) {
+      if (error instanceof TaskMatchError) {
         throw new CommandExecutionError(error.message, [
           {
             command,
             status: "error",
             message: error.message,
-            candidates: error.candidates?.map(snapshot),
+            candidates: error.candidates,
+            suggestions: error.suggestions,
             requiresReplan: false,
           },
         ]);
@@ -278,22 +223,44 @@ const applyCommand = async (
 
       try {
         const matched = matchBlackout(previews, command.payload.target as BlackoutLocator);
-        if (!dryRun) {
-          throw new CommandExecutionError("update_blackout_window execution is not implemented yet", [
-            { command, status: "error", requiresReplan: false },
-          ]);
-        }
-
         const nextStartDate = command.payload.startDate ?? isoDateOnly(matched.start);
         const nextEndDate = command.payload.endDate ?? isoDateOnly(matched.end);
+        const nextReason = command.payload.reason ?? matched.reason;
         const requiresReplan = command.payload.startDate !== undefined || command.payload.endDate !== undefined;
 
         const after: BlackoutPreview = {
           id: matched.id,
           start: startOfDayIso(nextStartDate),
           end: endOfDayIso(nextEndDate),
-          reason: command.payload.reason ?? matched.reason,
+          reason: nextReason,
         };
+
+        if (new Date(after.end).getTime() < new Date(after.start).getTime()) {
+          throw new CommandExecutionError("endDate must be on or after startDate", [
+            {
+              command,
+              status: "error",
+              message: "endDate must be on or after startDate",
+              matchedBlackouts: [matched],
+              requiresReplan: false,
+            },
+          ]);
+        }
+
+        if (!dryRun) {
+          const updated = await tx.blackoutWindow.update({
+            where: { id: matched.id },
+            data: {
+              ...(command.payload.startDate !== undefined ? { start: new Date(after.start) } : {}),
+              ...(command.payload.endDate !== undefined ? { end: new Date(after.end) } : {}),
+              ...(command.payload.reason !== undefined ? { reason: nextReason } : {}),
+            },
+          });
+
+          after.start = updated.start.toISOString();
+          after.end = updated.end.toISOString();
+          after.reason = updated.reason;
+        }
 
         return {
           result: {
@@ -327,9 +294,7 @@ const applyCommand = async (
       try {
         const matched = matchBlackout(previews, command.payload.target as BlackoutLocator);
         if (!dryRun) {
-          throw new CommandExecutionError("delete_blackout_window execution is not implemented yet", [
-            { command, status: "error", requiresReplan: false },
-          ]);
+          await tx.blackoutWindow.delete({ where: { id: matched.id } });
         }
 
         return {
@@ -531,7 +496,7 @@ const applyCommand = async (
       };
     }
     case "resume_task": {
-      const task = await resolve(command.payload.target, false);
+      const task = await resolve(command.payload.target);
       const before = snapshot(task);
       const updated = dryRun
         ? ({ ...task, status: "active", deletedAt: null } as Task)
@@ -575,7 +540,10 @@ const applyCommand = async (
       };
     }
     case "restore_task": {
-      const task = await resolve(command.payload.target, true);
+      const task = await resolve(command.payload.target, {
+        includeDeleted: true,
+        statusPreference: restoreStatusPreference,
+      });
       const before = snapshot(task);
       const updated = dryRun
         ? ({ ...task, status: "active", deletedAt: null } as Task)
@@ -624,7 +592,10 @@ const applyCommand = async (
           { command, status: "error", requiresReplan: false },
         ]);
       }
-      const task = await resolve(command.payload.target, true);
+      const task = await resolve(command.payload.target, {
+        includeDeleted: true,
+        statusPreference: reopenStatusPreference,
+      });
       const before = snapshot(task);
       const updated = dryRun
         ? ({
@@ -851,8 +822,10 @@ export const executeCommandBatch = async (
     throw error;
   }
 
+  const shouldReplan = replanNeeded || results.some((result) => result.requiresReplan);
+
   let replanTriggered = false;
-  if (replanNeeded && !dryRun) {
+  if (shouldReplan && !dryRun) {
     await plannerService.generatePlanSlots({ now });
     replanTriggered = true;
   }

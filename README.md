@@ -19,6 +19,7 @@ Development
 - Typecheck: `pnpm typecheck`
 - 数据库存本地 SQLite，数据库是唯一真相；不在客户端存储 API key。
 - AI 解析路由仅在服务器侧工作，需要设置 `OPENAI_API_KEY`（可选 `OPENAI_MODEL`，默认 `gpt-4.1-mini`），不会在客户端暴露。
+- OpenAI 可观测性：每次 `/v1/responses` 请求都会显式传 `store: true`、元数据（app/workflow/route/env/chat_id）以及 `X-Client-Request-Id`。可选头：`OpenAI-Project`（来自 `OPENAI_PROJECT`）和 `OpenAI-Organization`（来自 `OPENAI_ORGANIZATION`/`OPENAI_ORG`/`OPENAI_ORG_ID`）。`OPENAI_LOG` 控制 SDK 日志级别，`OPENAI_RESPONSE_DEBUG` 开启额外服务端 debug 日志。`OPENAI_RESPONSE_STORE` 不再影响 store 标志（为了保证日志可见性始终为 true）。如果工作区或组织启用了 Zero Data Retention，OpenAI 会忽略 store 标志，此时 responses 不会出现在 https://platform.openai.com/logs。
 
 Database
 --------

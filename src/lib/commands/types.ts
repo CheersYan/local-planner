@@ -38,6 +38,7 @@ export type CommandResult = {
   matchedTasks?: TaskPreview[];
   matchedBlackouts?: BlackoutPreview[];
   candidates?: TaskPreview[];
+  suggestions?: TaskPreview[];
   blackoutCandidates?: BlackoutPreview[];
   changes?: TaskChange[];
   blackoutChanges?: BlackoutChange[];

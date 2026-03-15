@@ -1,9 +1,13 @@
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { AiCommandBatch } from "@/lib/ai/command-schema";
 import { AiChatPanel } from "../ai-chat-panel";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 const renderHtml = (element: React.ReactElement) => renderToStaticMarkup(element);
 
